@@ -118,13 +118,23 @@ parser.add_argument('--vis', action='store_true')
 
 best_prec1 = 0
 
-
+'''
+returns the sum of k binary logistic regression losses
+log(1+exp(-yk*xk)), where yk={-1, 1}
+Arguments:
+    x{torch.Tensor}: *k logit prediction values
+    target{torch.Tensor}: *k. 1 if class exists in image, 0 otherwise
+'''
+def k_binary_logit_loss(x, target):
+    return torch.log(1+torch.exp(-(target * 2 - 1)*x)).sum()
+    
 def main():
     global args, best_prec1
     args = parser.parse_args()
     args.distributed = args.world_size > 1
 
     # create model
+    args.pretrained = True
     print("=> creating model '{}'".format(args.arch))
     if args.arch == 'localizer_alexnet':
         model = localizer_alexnet(pretrained=args.pretrained)
@@ -132,13 +142,13 @@ def main():
         model = localizer_alexnet_robust(pretrained=args.pretrained)
     print(model)
 
-    model.features = torch.nn.DataParallel(model.features)
+    #model.features = torch.nn.DataParallel(model.features)
     model.cuda()
 
     # TODO (Q1.1): define loss function (criterion) and optimizer from [1]
     # also use an LR scheduler to decay LR by 10 every 30 epochs
-    criterion = None
-    optimizer = None
+    criterion = k_binary_logit_loss
+    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
 
 
     # optionally resume from a checkpoint
@@ -163,9 +173,9 @@ def main():
     # Ensure that the sizes are 512x512
     # Also ensure that data directories are correct
     # The ones use for testing by TAs might be different
-    train_dataset = None
-    val_dataset = None
-    train_sampler = None
+    train_dataset = VOCDataset('trainval', top_n=10)
+    val_dataset = VOCDataset('test', top_n=10)
+    train_sampler = torch.utils.data.RandomSampler(train_dataset)
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -174,7 +184,8 @@ def main():
         num_workers=args.workers,
         pin_memory=True,
         sampler=train_sampler,
-        drop_last=True)
+        drop_last=True,
+        collate_fn = VOC_collate_fn)
 
     val_loader = torch.utils.data.DataLoader(
         val_dataset,
@@ -190,8 +201,8 @@ def main():
 
     # TODO (Q1.3): Create loggers for wandb.
     # Ideally, use flags since wandb makes it harder to debug code.
-
-
+    wandb.init(project="vlr-hw1")
+    
     for epoch in range(args.start_epoch, args.epochs):
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch)
@@ -231,15 +242,18 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
         # TODO (Q1.1): Get inputs from the data dict
         # Convert inputs to cuda if training on GPU
-        target = None
+        target = data['label'].cuda()
+        image = data['image'].cuda()
 
         # TODO (Q1.1): Get output from model
-        imoutput = None
+        imoutput = model.forward(image) #256, 20, 11, 11
 
         # TODO (Q1.1): Perform any necessary operations on the output
-
+        feature_size = imoutput.shape[-1]
+        preds = F.max_pool2d(imoutput, feature_size).squeeze()#256, 20, 1
+        
         # TODO (Q1.1): Compute loss using ``criterion``
-        loss = None
+        loss = criterion(preds, target)
 
         # measure metrics and record loss
         m1 = metric1(imoutput.data, target)
@@ -249,7 +263,10 @@ def train(train_loader, model, criterion, optimizer, epoch):
         avg_m2.update(m2)
 
         # TODO (Q1.1): compute gradient and perform optimizer step
-
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -272,6 +289,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
                       avg_m2=avg_m2))
 
         # TODO (Q1.3): Visualize/log things as mentioned in handout at appropriate intervals
+        wandb.log({'epoch': epoch, 'train/loss': loss})
 
         # End of train()
 
@@ -290,15 +308,18 @@ def validate(val_loader, model, criterion, epoch=0):
 
         # TODO (Q1.1): Get inputs from the data dict
         # Convert inputs to cuda if training on GPU
-        target = None
+        target = data['label'].cuda()
+        image = data['image'].cuda()
 
         # TODO (Q1.1): Get output from model
-        imoutput = None
+        imoutput = model.forward(image) #256, 20, 11, 11
 
         # TODO (Q1.1): Perform any necessary functions on the output
-
+        feature_size = imoutput.shape[-1]
+        preds = F.max_pool2d(imoutput, feature_size).squeeze()#256, 20, 1
+        
         # TODO (Q1.1): Compute loss using ``criterion``
-        loss = None
+        loss = criterion(preds, target)
 
         # measure metrics and record loss
         m1 = metric1(imoutput.data, target)

@@ -160,7 +160,16 @@ class VOCDataset(Dataset):
             3. Make sure to return only the top_n proposals based on proposal confidence ("boxScores")!
             4. You may have to write a custom collate_fn since some of the attributes below may be variable in number for each data point
         """
-        proposals = None
+        proposals = []
+        
+        n = self.roi_data['boxScores'][0][index].shape[0]
+        bboxes = self.roi_data['boxes'][0][index][0:10]
+        for t in bboxes:
+            ymin = t[0] / height
+            xmin = t[1] / width
+            ymax = t[2] / height
+            xmax = t[3] / width
+            proposals.append([xmin, ymin, xmax, ymax])
 
 
         ret = {}
@@ -171,3 +180,5 @@ class VOCDataset(Dataset):
         ret['gt_boxes'] = gt_boxes
         ret['gt_classes'] = gt_class_list
         return ret
+
+    

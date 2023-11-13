@@ -70,3 +70,20 @@ def get_box_data(classes, bbox_coordinates):
         ]
 
     return box_list
+
+
+def VOC_collate_fn(batch):
+    # dictionary collate function
+    # rois, gt_boxes, gt_classes are converted to lists.
+    keys = ['rois', 'label', 'wgt', 'image', 'gt_boxes', 'gt_classes']
+    dic = {k:[] for k in keys}
+    for bat in batch:
+        for k in keys:
+            dic[k].append(bat[k])
+        
+    dic['image'] = torch.stack(dic['image'])
+    dic['wgt'] = torch.stack(dic['wgt'])
+    dic['label']= torch.stack(dic['label'])
+
+    return dic
+    
