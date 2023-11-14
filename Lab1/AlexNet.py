@@ -7,7 +7,7 @@ sys.path.append(".")
 
 model_urls = {
     'alexnet': 'https://download.pytorch.org/models/alexnet-owt-4df8aa71.pth',
-    'alexnet/local': 'model/alexnet_pretrained_wts.pth'
+    'alexnet/local': 'CVandLearning_Seoul2023/Lab1/model/alexnet_pretrained_wts.pth'
 }
 
 
@@ -66,8 +66,21 @@ def localizer_alexnet(pretrained=False, **kwargs):
     model = LocalizerAlexNet(**kwargs)
     # TODO (Q1.3): Initialize weights based on whether it is pretrained or not
     if pretrained:
-        model.features.load_state_dict(torch.load(model_urls['alexnet/local']))
-    
+        state_dic = torch.load(model_urls['alexnet/local'])
+        new_state_dic = {}
+        for k, v in state_dic.items():
+            if 'features' in k:
+                new_state_dic[k.partition('features.')[2]] = v
+        model.features.load_state_dict(new_state_dic)
+    else:
+        for k,m in model.featurs.named_parameters():
+            if 'weight' in k:
+                nn.init.xavier_uniform_(m)
+    # initialize classifier with xavier.
+    for k, m in model.classifier.named_parameters():
+        if 'weight' in k:
+            nn.init.xavier_uniform_(m)
+        
     return model
 
 

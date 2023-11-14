@@ -19,6 +19,8 @@ import torchvision.datasets as datasets
 import torchvision.models as models
 import wandb
 
+import cv2
+
 from AlexNet import localizer_alexnet, localizer_alexnet_robust
 from voc_dataset import *
 from utils import *
@@ -117,7 +119,12 @@ parser.add_argument(
 parser.add_argument('--vis', action='store_true')
 
 best_prec1 = 0
-
+CLASS_NAMES = [
+    'aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus', 'car',
+    'cat', 'chair', 'cow', 'diningtable', 'dog', 'horse', 'motorbike',
+    'person', 'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor'
+]
+CLASS_ID_TO_LABEL = {}
 '''
 returns the sum of k binary logistic regression losses
 log(1+exp(-yk*xk)), where yk={-1, 1}
@@ -126,10 +133,10 @@ Arguments:
     target{torch.Tensor}: *k. 1 if class exists in image, 0 otherwise
 '''
 def k_binary_logit_loss(x, target):
-    return torch.log(1+torch.exp(-(target * 2 - 1)*x)).sum()
+    return torch.log(1+torch.exp(-(target * 2 - 1)*x)).mean()
     
 def main():
-    global args, best_prec1
+    global args, best_prec1, CLASS_NAMES, CLASS_ID_TO_LABEL
     args = parser.parse_args()
     args.distributed = args.world_size > 1
 
@@ -175,8 +182,8 @@ def main():
     # The ones use for testing by TAs might be different
     train_dataset = VOCDataset('trainval', top_n=10)
     val_dataset = VOCDataset('test', top_n=10)
+    CLASS_ID_TO_LABEL = dict(enumerate(CLASS_NAMES))
     train_sampler = torch.utils.data.RandomSampler(train_dataset)
-
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -193,7 +200,8 @@ def main():
         shuffle=False,
         num_workers=args.workers,
         pin_memory=True,
-        drop_last=True)
+        drop_last=True,
+        collate_fn = VOC_collate_fn)
 
     if args.evaluate:
         validate(val_loader, model, criterion)
@@ -201,7 +209,9 @@ def main():
 
     # TODO (Q1.3): Create loggers for wandb.
     # Ideally, use flags since wandb makes it harder to debug code.
-    wandb.init(project="vlr-hw1")
+    USE_WANDB = True
+    if USE_WANDB:
+        wandb.init(project="vlr-hw1")
     
     for epoch in range(args.start_epoch, args.epochs):
         # train for one epoch
@@ -256,9 +266,9 @@ def train(train_loader, model, criterion, optimizer, epoch):
         loss = criterion(preds, target)
 
         # measure metrics and record loss
-        m1 = metric1(imoutput.data, target)
-        m2 = metric2(imoutput.data, target)
-        losses.update(loss.item(), input.size(0))
+        m1 = metric1(preds.cpu().detach().numpy(), target.cpu().detach().numpy())
+        m2 = metric2(preds.cpu().detach().numpy(), target.cpu().detach().numpy())
+        losses.update(loss.item())
         avg_m1.update(m1)
         avg_m2.update(m2)
 
@@ -289,8 +299,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
                       avg_m2=avg_m2))
 
         # TODO (Q1.3): Visualize/log things as mentioned in handout at appropriate intervals
-        wandb.log({'epoch': epoch, 'train/loss': loss})
-
+        wandb.log({'train/loss': loss.item(), 'train/m1': avg_m1.avg, 'train/m2': avg_m2.avg})
         # End of train()
 
 
@@ -322,9 +331,9 @@ def validate(val_loader, model, criterion, epoch=0):
         loss = criterion(preds, target)
 
         # measure metrics and record loss
-        m1 = metric1(imoutput.data, target)
-        m2 = metric2(imoutput.data, target)
-        losses.update(loss.item(), input.size(0))
+        m1 = metric1(preds.cpu().detach().numpy(), target.cpu().detach().numpy())
+        m2 = metric2(preds.cpu().detach().numpy(), target.cpu().detach().numpy())
+        losses.update(loss.item())
         avg_m1.update(m1)
         avg_m2.update(m2)
 
@@ -346,8 +355,31 @@ def validate(val_loader, model, criterion, epoch=0):
                       avg_m2=avg_m2))
 
         # TODO (Q1.3): Visualize things as mentioned in handout
+        wandb.log({'valid/loss': loss.item(), 'valid/m1': avg_m1.avg, 'valid/m2': avg_m2.avg})
+        
         # TODO (Q1.3): Visualize at appropriate intervals
-
+        if i == 1:
+            imgs = []; heatmaps = []  
+            for idx in range(4, 8):
+                img = image[idx].cpu().detach()
+                gt_cls = data['gt_classes'][idx][0]
+                imgs.append(wandb.Image(tensor_to_PIL(img),
+                        boxes={
+                            "predictions": {
+                                "box_data": get_box_data([gt_cls], [data['gt_boxes'][idx][0]]),
+                                "class_labels": CLASS_ID_TO_LABEL,
+                            },
+                        }))
+                # create heatmap
+                heatmap = imoutput[idx][gt_cls].cpu().detach().numpy()
+                heatmap = heatmap-np.min(heatmap)
+                heatmap /= np.max(heatmap)
+                heatmap = cv2.resize(heatmap, (img.shape[2], img.shape[1]))
+                heatmap = np.uint8(255 * heatmap)
+                heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+                heatmaps.append(wandb.Image(heatmap))
+            wandb.log({'input_img': imgs, 'heatmaps': heatmaps})
+        
 
     print(' * Metric1 {avg_m1.avg:.3f} Metric2 {avg_m2.avg:.3f}'.format(
         avg_m1=avg_m1, avg_m2=avg_m2))
@@ -383,14 +415,21 @@ class AverageMeter(object):
 
 def metric1(output, target):
     # TODO (Q1.5): compute metric1
-
-    return [0]
+    num_classes = output.shape[-1]
+    output = 1/(1+np.exp(-output))
+    ap = 0.0; valid_cls = 0
+    for i in range(num_classes):
+        if target[:, i].sum() == 0: continue #no positive class in batch
+        valid_cls += 1
+        ap += sklearn.metrics.average_precision_score(target[:, i], output[:, i])
+    return ap/valid_cls
 
 
 def metric2(output, target):
-    # TODO (Q1.5): compute metric2
-
-    return [0]
+    output = 1/(1+np.exp(-output))
+    output = np.where(output>0.6, 1, 0)
+    recall = sklearn.metrics.recall_score(target, output, average='micro')
+    return recall
 
 
 if __name__ == '__main__':
