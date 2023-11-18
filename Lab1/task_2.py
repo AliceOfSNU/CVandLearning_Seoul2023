@@ -99,20 +99,26 @@ def test_model(model, val_loader=None, thresh=0.05):
         for iter, data in enumerate(val_loader):
 
             # one batch = data for one image
-            image = data['image']
-            target = data['label']
+            image = data['image'].cuda()
+            target = data['label'].cuda()
             wgt = data['wgt']
             rois = data['rois']
             gt_boxes = data['gt_boxes']
             gt_class_list = data['gt_classes']
 
             # TODO (Q2.3): perform forward pass, compute cls_probs
-
-
+            h, w = image.shape[-2:]
+            scale_factor = torch.Tensor([w, h, w, h])
+            rois = [
+                torch.cat(bbox)*scale_factor for bbox in rois
+            ]
+            rois  = [torch.stack(rois, dim=0).float().cuda()]
+            cls_probs = model.forward(image, rois, target)
+            
             # TODO (Q2.3): Iterate over each class (follow comments)
             for class_num in range(20):
                 # get valid rois and cls_scores based on thresh
-
+                
                 # use NMS to get boxes and scores
                 pass
 
@@ -180,8 +186,8 @@ def main():
     args = parser.parse_args()
     # TODO (Q2.2): Load datasets and create dataloaders
     # Initialize wandb logger
-    train_dataset = VOCDataset('trainval', top_n=10)
-    val_dataset = VOCDataset('test', top_n=10)
+    train_dataset = VOCDataset('trainval', image_size=512, top_n=10)
+    val_dataset = VOCDataset('test', image_size=512, top_n=10)
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
