@@ -25,12 +25,38 @@ class WSDDN(nn.Module):
             print(classes)
 
         # TODO (Q2.1): Define the WSDDN model
-        self.features = None
-        self.roi_pool = None
-        self.classifier = None
+        # feature extraction is same as AlexNet
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=11, stride=4, padding=2),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2),
+            nn.Conv2d(64, 192, kernel_size=5, stride=1, padding=2),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2),
+            nn.Conv2d(192, 384, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(384, 256, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True)
+        )
+        self.roi_pool = roi_pool
+        
+        
+        self.classifier = self.classifier = nn.Sequential(
+            # fc6
+            nn.Linear(4 * 4, 128),
+            nn.ReLU(inplace=True),
+            # fc7
+            nn.Linear(128, 128),
+            nn.ReLU(inplace=True)
+        )
 
-        self.score_fc = None
-        self.bbox_fc = None
+
+        # fc8c
+        self.score_fc = nn.Linear(128, self.n_classes)
+        # fc8d
+        self.bbox_fc = nn.Linear(128, self.n_classes)
 
         # loss
         self.cross_entropy = None
@@ -48,8 +74,10 @@ class WSDDN(nn.Module):
 
         # TODO (Q2.1): Use image and rois as input
         # compute cls_prob which are N_roi X 20 scores
-        cls_prob = None
-
+        x = self.features(image)
+        x = self.roi_pool(x, rois, 4, spatial_scale=13/224) # N_roi * n_features *  
+        x = self.classifier(x.view(*x.shape[:-2], 4*4))
+        cls_prob = self.score_fc(x)
 
         if self.training:
             label_vec = gt_vec.view(self.n_classes, -1)

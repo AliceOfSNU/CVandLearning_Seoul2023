@@ -30,7 +30,7 @@ class VOCDataset(Dataset):
         split='trainval',
         image_size=224,
         top_n=300,
-        data_dir='../../data/VOCdevkit/VOC2007/'
+        data_dir='data/VOCdevkit/VOC2007/'
     ):
         super().__init__()
         self.split = split     # 'trainval' or 'test'
@@ -163,7 +163,7 @@ class VOCDataset(Dataset):
         proposals = []
         
         n = self.roi_data['boxScores'][0][index].shape[0]
-        bboxes = self.roi_data['boxes'][0][index][0:10]
+        bboxes = self.roi_data['boxes'][0][index][0:self.top_n]
         for t in bboxes:
             ymin = t[0] / height
             xmin = t[1] / width

@@ -25,56 +25,47 @@ parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument(
     '--lr',
     default=0.0001,
-    type=float,
-    description='Learning rate'
+    type=float
 )
 parser.add_argument(
     '--lr-decay-steps',
     default=150000,
-    type=int,
-    description='Interval at which the lr is decayed'
+    type=int
 )
 parser.add_argument(
     '--lr-decay',
     default=0.1,
-    type=float,
-    description='Decay rate of lr'
+    type=float
 )
 parser.add_argument(
     '--momentum',
     default=0.9,
-    type=float,
-    description='Momentum of optimizer'
+    type=float
 )
 parser.add_argument(
     '--weight-decay',
     default=0.0005,
-    type=float,
-    description='Weight decay'
+    type=float
 )
 parser.add_argument(
     '--epochs',
     default=5,
-    type=int,
-    description='Number of epochs'
+    type=int
 )
 parser.add_argument(
     '--val-interval',
     default=5000,
-    type=int,
-    description='Interval at which to perform validation'
+    type=int
 )
 parser.add_argument(
     '--disp-interval',
     default=10,
-    type=int,
-    description='Interval at which to perform visualization'
+    type=int
 )
 parser.add_argument(
     '--use-wandb',
     default=False,
-    type=bool,
-    description='Flag to enable visualization'
+    type=bool
 )
 # ------------
 
@@ -141,17 +132,23 @@ def train_model(model, train_loader=None, val_loader=None, optimizer=None, args=
 
             # TODO (Q2.2): get one batch and perform forward pass
             # one batch = data for one image
-            image = data['image']
-            target = data['label']
+            image = data['image'].cuda()
+            target = data['label'].cuda()
             wgt = data['wgt']
             rois = data['rois']
             gt_boxes = data['gt_boxes']
             gt_class_list = data['gt_classes']
-
+            
+            h, w = image.shape[-2:]
+            scale_factor = torch.Tensor([w, h, w, h])
+            rois = [
+                torch.cat(bbox)*scale_factor for bbox in rois
+            ]
+            rois  = [torch.stack(rois, dim=0).float().cuda()]
             # TODO (Q2.2): perform forward pass
             # take care that proposal values should be in pixels
             # Convert inputs to cuda if training on GPU
-
+            model.forward(image, rois, target)
 
             # backward pass and update
             loss = model.loss
@@ -183,8 +180,8 @@ def main():
     args = parser.parse_args()
     # TODO (Q2.2): Load datasets and create dataloaders
     # Initialize wandb logger
-    train_dataset = None
-    val_dataset = None
+    train_dataset = VOCDataset('trainval', top_n=10)
+    val_dataset = VOCDataset('test', top_n=10)
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -235,9 +232,17 @@ def main():
     net.train()
 
     # TODO (Q2.2): Freeze AlexNet layers since we are loading a pretrained model
-
+    for name, param in net.named_parameters():
+        if name in pret_net:
+            param.requires_grad = False
+            print("froze ", name)
+            
     # TODO (Q2.2): Create optimizer only for network parameters that are trainable
-    optimizer = None
+    optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, net.parameters()), lr=args.lr, momentum=args.momentum)
 
     # Training
-    train_model(net, train_loader, optimizer, args)
+    train_model(net, train_loader, val_loader, optimizer, args)
+
+
+if __name__ == '__main__':
+    main()
