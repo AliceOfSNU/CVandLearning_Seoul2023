@@ -183,7 +183,7 @@ def main():
     train_dataset = VOCDataset('trainval', top_n=10)
     val_dataset = VOCDataset('test', top_n=10)
     CLASS_ID_TO_LABEL = dict(enumerate(CLASS_NAMES))
-    train_sampler = torch.utils.data.RandomSampler(train_dataset)
+    train_sampler = torch.utils.data.SequentialSampler(train_dataset)
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -246,6 +246,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
     model.train()
 
     end = time.time()
+    iters_per_epoch = len(train_loader)
     for i, (data) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
@@ -299,8 +300,31 @@ def train(train_loader, model, criterion, optimizer, epoch):
                       avg_m2=avg_m2))
 
         # TODO (Q1.3): Visualize/log things as mentioned in handout at appropriate intervals
-        wandb.log({'train/loss': loss.item(), 'train/m1': avg_m1.avg, 'train/m2': avg_m2.avg})
+        wandb.log({'iteration': epoch*iters_per_epoch+i, 'train/loss': loss.item(), 'train/m1': m1, 'train/m2': m2})
+        if (epoch == 1 or epoch % 15 == 0) and i == 2:
+            imgs = []; heatmaps = []  
+            for idx in range(2):
+                img = image[idx].cpu().detach()
+                gt_cls = data['gt_classes'][idx][0]
+                imgs.append(wandb.Image(tensor_to_PIL(img),
+                        boxes={
+                            "predictions": {
+                                "box_data": get_box_data([gt_cls], [data['gt_boxes'][idx][0]]),
+                                "class_labels": CLASS_ID_TO_LABEL,
+                            },
+                        }))
+                # create heatmap
+                heatmap = imoutput[idx][gt_cls].cpu().detach().numpy()
+                heatmap = heatmap-np.min(heatmap)
+                heatmap /= np.max(heatmap)
+                heatmap = cv2.resize(heatmap, (img.shape[2], img.shape[1]))
+                heatmap = np.uint8(255 * heatmap)
+                heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+                heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+                heatmaps.append(wandb.Image(heatmap))
+            wandb.log({'input_img': imgs, 'heatmaps': heatmaps})
         # End of train()
+        
 
 
 def validate(val_loader, model, criterion, epoch=0):
@@ -354,8 +378,8 @@ def validate(val_loader, model, criterion, epoch=0):
                       avg_m1=avg_m1,
                       avg_m2=avg_m2))
 
-        # TODO (Q1.3): Visualize things as mentioned in handout
-        wandb.log({'valid/loss': loss.item(), 'valid/m1': avg_m1.avg, 'valid/m2': avg_m2.avg})
+        # TODO (Q 1.3): Visualize things as mentioned in handout
+        ''' UNCOMMENT FOR Q!.3is more tuned to this dataset. Even though there is a steep 
         
         # TODO (Q1.3): Visualize at appropriate intervals
         if i == 1:
@@ -380,7 +404,8 @@ def validate(val_loader, model, criterion, epoch=0):
                 heatmaps.append(wandb.Image(heatmap))
             wandb.log({'input_img': imgs, 'heatmaps': heatmaps})
         
-
+        '''
+    wandb.log({'epoch':epoch, 'valid/loss': loss.item(), 'valid/m1': avg_m1.avg, 'valid/m2':avg_m2.avg}) 
     print(' * Metric1 {avg_m1.avg:.3f} Metric2 {avg_m2.avg:.3f}'.format(
         avg_m1=avg_m1, avg_m2=avg_m2))
 

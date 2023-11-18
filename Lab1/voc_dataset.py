@@ -30,7 +30,7 @@ class VOCDataset(Dataset):
         split='trainval',
         image_size=224,
         top_n=300,
-        data_dir='data/VOCdevkit/VOC2007/'
+        data_dir='../../data/VOCdevkit/VOC2007/'
     ):
         super().__init__()
         self.split = split     # 'trainval' or 'test'

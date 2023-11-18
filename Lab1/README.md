@@ -159,6 +159,13 @@ Here are a couple examples of what a heatmap should look like. They have been co
 - Expected validation metrics: For metric1 ~(0.5, 0.6),
                                For metric2 ~(0.4, 0.5)
 
+wandb: Run summary:
+wandb: train/loss 0.0037
+wandb:   train/m1 0.99968
+wandb:   train/m2 0.98397
+wandb: valid/loss 0.25699
+wandb:   valid/m1 0.62361
+wandb:   valid/m2 0.48098
 
 #### Q 1.7 In the heatmap visualizations you observe that there are usually peaks on salient features of the objects but not on the entire objects. How can you fix this in the architecture of the model? (Hint: during training the max-pool operation picks the most salient location). Implement this new model in ``LocalizerAlexNetRobust`` and also implement the corresponding ``localizer_alexnet_robust()``. Train the model using batchsize=32, learning rate=0.01, epochs=45. Evaluate every 2 epochs.(Hint: also try lr=0.1 - best value varies with implementation of loss) (15 pt)
 - Hint:
