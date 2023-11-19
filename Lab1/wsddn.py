@@ -75,7 +75,7 @@ class WSDDN(nn.Module):
         # TODO (Q2.1): Use image and rois as input
         # compute cls_prob which are N_roi X 20 scores
         x = self.features(image)
-        x = self.roi_pool(x, rois, 2, spatial_scale=31/512) # N_roi * n_features *  2 * 2
+        x = self.roi_pool(x, [rois], 2, spatial_scale=31/512) # N_roi * n_features *  2 * 2
         x = self.classifier(x.view(*x.shape[:-3], 256*2*2)) # N_roi * 256
         c_scores = self.score_fc(x).softmax(dim=-1) # softmax over classes
         d_scores = self.bbox_fc(x).softmax(dim=-2) # softmax over regions
