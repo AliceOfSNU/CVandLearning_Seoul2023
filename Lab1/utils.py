@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as transforms
-
+import torchvision.ops as ops
 
 # TODO: given bounding boxes and corresponding scores, perform non max suppression
 def nms(bounding_boxes, confidence_score, threshold=0.05):
@@ -20,7 +20,18 @@ def nms(bounding_boxes, confidence_score, threshold=0.05):
     return: list of bounding boxes and scores
     """
     boxes, scores = None, None
-
+    # ignore low confidence
+    mask = confidence_score > threshold
+    boxes = bounding_boxes[mask]
+    scores = confidence_score[mask]
+    if scores.shape[0] > 0:
+        keep_idxs = ops.nms(bounding_boxes, confidence_score, 0.3) # 
+        boxes = torch.index_select(boxes, 0, keep_idxs).cpu().numpy()
+        scores = torch.index_select(scores, 0, keep_idxs).cpu().numpy()
+    else: 
+        boxes = []
+        scores = []
+    # USING torchvision.ops.nms instead
     return boxes, scores
 
 

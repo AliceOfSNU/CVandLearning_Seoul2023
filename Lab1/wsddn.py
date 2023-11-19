@@ -42,13 +42,13 @@ class WSDDN(nn.Module):
         )
         self.roi_pool = roi_pool
         
-        
-        self.classifier = self.classifier = nn.Sequential(
+        self.spp_size = 3
+        self.classifier = nn.Sequential(
             # fc6
-            nn.Linear(2 * 2 * 256, 2 * 256),
+            nn.Linear(self.spp_size * self.spp_size * 256, self.spp_size * 256),
             nn.ReLU(inplace=True),
             # fc7
-            nn.Linear(2 * 256, 256),
+            nn.Linear(self.spp_size * 256, 256),
             nn.ReLU(inplace=True)
         )
 
@@ -75,8 +75,8 @@ class WSDDN(nn.Module):
         # TODO (Q2.1): Use image and rois as input
         # compute cls_prob which are N_roi X 20 scores
         x = self.features(image)
-        x = self.roi_pool(x, [rois], 2, spatial_scale=31/512) # N_roi * n_features *  2 * 2
-        x = self.classifier(x.view(*x.shape[:-3], 256*2*2)) # N_roi * 256
+        x = self.roi_pool(x, [rois], self.spp_size, spatial_scale=31/512) # N_roi * n_features *  2 * 2
+        x = self.classifier(x.view(*x.shape[:-3], 256*self.spp_size*self.spp_size)) # N_roi * 256
         c_scores = self.score_fc(x).softmax(dim=-1) # softmax over classes
         d_scores = self.bbox_fc(x).softmax(dim=-2) # softmax over regions
         cls_prob = c_scores * d_scores # elementwise prod, N_roi * n_classes
@@ -98,10 +98,11 @@ class WSDDN(nn.Module):
         # that is the output of forward()
         # Checkout forward() to see how it is called
         # labels mapped to -1, 1
-        label_vec = (label_vec * 2) - 1.0
+        #label_vec = (label_vec * 2) - 1.0
         # calculate loss, summing over regions
         summed_cls_probs = cls_prob.sum(0, keepdim=True)
-        loss = torch.log(label_vec * (summed_cls_probs - 0.5) + 0.5)
-        loss = loss.sum()
-
+        summed_cls_probs = summed_cls_probs.clamp(0.0, 1.0)
+        #loss = torch.log(label_vec * (summed_cls_probs - 0.5) + 0.5)
+        #loss = loss.sum()
+        loss = F.binary_cross_entropy(summed_cls_probs, label_vec, reduction='sum')
         return loss
