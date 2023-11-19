@@ -10,7 +10,7 @@ from torch.nn.parameter import Parameter
 import numpy as np
 from datetime import datetime
 import pickle as pkl
-
+import time 
 # imports
 from wsddn import WSDDN
 from voc_dataset import *
@@ -81,7 +81,8 @@ output_dir = "./"
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
-
+# WANDB
+USE_WANDB = True
 def calculate_map(detections, gt_cnts):
     """
     Calculate the mAP for classification.
@@ -175,7 +176,11 @@ def train_model(model, train_loader=None, val_loader=None, optimizer=None, args=
     # Initialize training variables
     train_loss = 0
     step_cnt = 0
+    batch_time = AverageMeter()
+    losses = AverageMeter()
+    
     for epoch in range(args.epochs):
+        end = time.time()
         for iter, data in enumerate(train_loader):
 
             # TODO (Q2.2): get one batch and perform forward pass
@@ -207,27 +212,53 @@ def train_model(model, train_loader=None, val_loader=None, optimizer=None, args=
             loss.backward()
             optimizer.step()
 
+            # average loss
+            losses.update(loss.item())
+            
+            # measure elapsed time
+            batch_time.update(time.time() - end)
+            end = time.time()
+            
             # TODO (Q2.2): evaluate the model every N iterations (N defined in handout)
             # Add wandb logging wherever necessary
             if iter % args.val_interval == 0 and iter != 0:
-                model.eval()
-                ap = test_model(model, val_loader)
-                print("AP ", ap)
-                model.train()
+                print('Epoch: [{0}][{1}/{2}]\t'
+                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(
+                      epoch,
+                      iter,
+                      len(train_loader),
+                      batch_time=batch_time,
+                      loss=losses))
+                if USE_WANDB:
+                    wandb.log({'iteration': step_cnt, "train/loss": losses.avg})
+                    
 
-            # TODO (Q2.4): Perform all visualizations here
-            # The intervals for different things are defined in the handout
-
-    # TODO (Q2.4): Plot class-wise APs
-
+        # TODO (Q2.4): Perform all visualizations here
+        # The intervals for different things are defined in the handout
+        model.eval()
+        ap = test_model(model, val_loader)
+        print("AP ", ap)
+        if USE_WANDB:
+            # log mAP and per class AP
+            dic = {f"eval/ap_{cls_id}":cls_ap for cls_id, cls_ap in enumerate(ap)}
+            dic.update({"eval/mAP": np.mean(ap)})
+            wandb.log(dic)
+        model.train()
+                
+    
 
 def main():
     """
     Creates dataloaders, network, and calls the trainer
     """
+    global USE_WANDB
     args = parser.parse_args()
     # TODO (Q2.2): Load datasets and create dataloaders
     # Initialize wandb logger
+    if USE_WANDB:
+        wandb.init(project="vlr-hw1")
+        
     train_dataset = VOCDataset('trainval', image_size=512, top_n=10)
     val_dataset = VOCDataset('test', image_size=512, top_n=10)
 
