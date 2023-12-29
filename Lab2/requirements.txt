@@ -1,8 +1,3 @@
---find-links https://download.pytorch.org/whl/torch_stable.html
-torch
-torchvision
-numpy
-matplotlib
-gdown
+transformers
+tensorboard
 tqdm
-clean-fid
