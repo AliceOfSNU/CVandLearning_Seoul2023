@@ -11,7 +11,8 @@ import torchvision.transforms as transforms
 import torchvision.ops as ops
 
 # TODO: given bounding boxes and corresponding scores, perform non max suppression
-def nms(bounding_boxes, confidence_score, threshold=0.05):
+# the tensors should be on cpu.
+def nms(bounding_boxes, confidence_score, threshold=0.3):
     """
     bounding boxes of shape     Nx4
     confidence scores of shape  N
@@ -21,13 +22,13 @@ def nms(bounding_boxes, confidence_score, threshold=0.05):
     """
     boxes, scores = None, None
     # ignore low confidence
-    mask = confidence_score > threshold
-    boxes = bounding_boxes[mask]
+    mask = confidence_score.gt(0.05)
     scores = confidence_score[mask]
+    boxes = bounding_boxes[mask]
     if scores.shape[0] > 0:
-        keep_idxs = ops.nms(bounding_boxes, confidence_score, 0.3) # 
-        boxes = torch.index_select(boxes, 0, keep_idxs).cpu().numpy()
-        scores = torch.index_select(scores, 0, keep_idxs).cpu().numpy()
+        keep_idxs = ops.nms(boxes, scores, threshold) # 
+        boxes = torch.index_select(boxes, 0, keep_idxs).detach().cpu().numpy().astype(np.float64)
+        scores = torch.index_select(scores, 0, keep_idxs).detach().cpu().numpy().astype(np.float64)
     else: 
         boxes = []
         scores = []

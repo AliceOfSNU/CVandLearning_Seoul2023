@@ -40,22 +40,31 @@ class WSDDN(nn.Module):
             nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True)
         )
-        self.roi_pool = roi_pool
         
-        self.spp_size = 3
+        # pooling and spp
+        self.roi_pool = roi_pool
+        self.roi_size = 32
+        ## if pyramid_pool
+        self.spp_sizes = [16, 4, 1]
+        self.spp_dim = 0
+        for sz in self.spp_sizes: self.spp_dim += sz
+        ## else
+        self.spp_dim_sqrt = 4
+        self.spp_dim = 16
+        ##
         self.classifier = nn.Sequential(
             # fc6
-            nn.Linear(self.spp_size * self.spp_size * 256, self.spp_size * 256),
+            nn.Linear(self.spp_dim * 256, self.spp_dim * 64),
             nn.ReLU(inplace=True),
             # fc7
-            nn.Linear(self.spp_size * 256, 256),
+            nn.Linear(self.spp_dim * 64, 256),
             nn.ReLU(inplace=True)
         )
 
 
-        # fc8c
+        # fc8c (classification head)
         self.score_fc = nn.Linear(256, self.n_classes)
-        # fc8d
+        # fc8d (detection head)
         self.bbox_fc = nn.Linear(256, self.n_classes)
 
         # loss
@@ -75,8 +84,15 @@ class WSDDN(nn.Module):
         # TODO (Q2.1): Use image and rois as input
         # compute cls_prob which are N_roi X 20 scores
         x = self.features(image)
-        x = self.roi_pool(x, [rois], self.spp_size, spatial_scale=31/512) # N_roi * n_features *  2 * 2
-        x = self.classifier(x.view(*x.shape[:-3], 256*self.spp_size*self.spp_size)) # N_roi * 256
+        ## if spp_pooling
+            # spp-pooling is a pyramid like max pooling
+            # each pyramid layer outputs different dims, 4*4, 2*2, 1*1, for example
+            # they are concatenated and flattened to a 21*feature_dim - tensor
+        ## else
+        x = self.roi_pool(x, [rois], self.spp_dim_sqrt, spatial_scale=31/512) # N_roi * n_features *  2 * 2
+        ## endif
+        
+        x = self.classifier(x.view(*x.shape[:-3], 256*self.spp_dim)) # N_roi * 256
         c_scores = self.score_fc(x).softmax(dim=-1) # softmax over classes
         d_scores = self.bbox_fc(x).softmax(dim=-2) # softmax over regions
         cls_prob = c_scores * d_scores # elementwise prod, N_roi * n_classes
