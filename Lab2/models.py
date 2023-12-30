@@ -30,7 +30,7 @@ class BaselineNet(nn.Module):
         self.text_encoder = RobertaModel.from_pretrained(t_type)
         for param in self.text_encoder.parameters():
             param.requires_grad = False
-
+        print(self.text_encoder)
         # Visual encoder
         r18 = resnet18(pretrained=True)
         self.vis_encoder = nn.Sequential(*(list(r18.children())[:-2]))
@@ -40,12 +40,12 @@ class BaselineNet(nn.Module):
         # Classifier
         self.classifier = nn.Linear(
             self.text_encoder.config.hidden_size + 512,
-            TODO
+            512
         )
 
     def forward(self, image, question):
         """Forward pass, image (B, 3, 224, 224), qs list of str."""
-        return TODO
+        return None
 
     @torch.no_grad()
     def compute_text_feats(self, text):
@@ -59,7 +59,7 @@ class BaselineNet(nn.Module):
     @torch.no_grad()
     def compute_vis_feats(self, image):
         """Convert image tensors to feature tensors."""
-        return TODO  # feed to vis_encoder and then mean pool on spatial dims
+        return None  # feed to vis_encoder and then mean pool on spatial dims
 
     def train(self, mode=True):
         """Override train to set backbones in eval mode."""

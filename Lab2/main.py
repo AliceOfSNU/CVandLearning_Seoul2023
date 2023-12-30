@@ -16,7 +16,7 @@ from vqa_dataset import VQADataset
 
 class Trainer:
     """Train/test models on manipulation."""
-
+ 
     def __init__(self, model, data_loaders, args):
         self.model = model
         self.data_loaders = data_loaders

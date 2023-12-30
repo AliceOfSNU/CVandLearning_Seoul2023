@@ -29,25 +29,29 @@ class VQADataset(Dataset):
             image_filename_pattern (str): The pattern the filenames
                 (eg "COCO_train2014_{}.jpg")
         """
-        self._vqa = TODO  # load the VQA api
+        self._vqa = VQA(
+            annotation_json_file_path, question_json_file_path
+        )  # load the VQA api#
+
         # also initialize whatever you need from self._vqa
         self._image_dir = image_dir
         self._image_filename_pattern = image_filename_pattern
 
         # Publicly accessible dataset parameters
+        # total 5217 classification. 5217th corresponds to unknown.
         self.answer_list_length = answer_list_length + 1
         self.unknown_answer_index = answer_list_length
         self.size = size
 
         # Create the answer map if necessary
-        keys = sorted(self._vqa.qa.keys())
+        self.keys = sorted(self._vqa.qa.keys())
         if answer_to_id_map is None:
             all_answers = [
                 ' '.join([
                     re.sub(r'\W+', '', word)
                     for word in a['answer'].lower().split()
                 ])
-                for key in keys
+                for key in self.keys
                 for a in self._vqa.qa[key]['answers']
             ]
             self.answer_to_id_map = self._create_id_map(
@@ -71,7 +75,9 @@ class VQADataset(Dataset):
         return {tup[0]: t for t, tup in enumerate(common)}
 
     def __len__(self):
-        return TODO
+        # there are more questions then there are images.
+        # also, for each questions, there are more than one possible answers(10 answers are given..)
+        return len(self._vqa.qa) #return the number of questions.
 
     def __getitem__(self, idx):
         """
@@ -83,8 +89,8 @@ class VQADataset(Dataset):
         Returns:
             A dict containing torch tensors for image, question and answers
         """
-        q_anno = TODO  # load annotation
-        q_str = TODO  # question in str format
+        q_anno = self._vqa.load_qa(self.keys[idx])[0]# load annotation
+        q_str = self._vqa.qqa[self.keys[idx]]  # question in str format
 
         # Load and pre-process image
         name = str(q_anno['image_id'])
@@ -100,15 +106,15 @@ class VQADataset(Dataset):
         std_ = [0.229, 0.224, 0.225]
         preprocessing = transforms.Compose([
             transforms.Pad((0, 0, max_wh - width, max_wh - height)),
-            TODO,  # resize to self.size
-            TODO,  # convert to tensor
-            TODO  # normalize with mean_ and std_
+            transforms.Resize(self.size),  # resize to self.size
+            transforms.ToTensor(),  # convert to tensor
+            transforms.Normalize(mean_, std_)  # normalize with mean_ and std_
         ])
         img = preprocessing(_img)
         orig_prep = transforms.Compose([  # do not normalize!
             transforms.Pad((0, 0, max_wh - width, max_wh - height)),
-            TODO,  # resize to self.size
-            TODO  # convert to tensor
+            transforms.Resize(self.size),  # resize to self.size
+            transforms.ToTensor(),  # convert to tensor
         ])  # this is for visualizations only
         orig_img = orig_prep(_img)
 
