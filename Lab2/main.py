@@ -7,12 +7,15 @@ import torch
 from torch.nn import functional as F
 from torch.optim import Adam
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
+import torchvision.transforms as transforms
+#from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from models import BaselineNet, TransformerNet
 from vqa_dataset import VQADataset
 
+import wandb
+USE_WANDB = True
 
 class Trainer:
     """Train/test models on manipulation."""
@@ -22,8 +25,9 @@ class Trainer:
         self.data_loaders = data_loaders
         self.args = args
 
-        self.writer = SummaryWriter('runs/' + args.tensorboard_dir)
-
+        #self.writer = SummaryWriter('runs/' + args.tensorboard_dir)
+        if USE_WANDB:
+            wandb.init(project = 'vqa')
         self.optimizer = Adam(
             model.parameters(), lr=args.lr, betas=(0.0, 0.9), eps=1e-8
         )
@@ -96,52 +100,72 @@ class Trainer:
             scores = self.model(
                 data['image'].to(self.args.device),
                 data['question']
-            )
-            answers = data['answers'].to(self.args.device)
-
+            ) # B * 5217 (no activation at end, values can be negative)
+            #answers = data['answers'].to(self.args.device) #0.0 or 1.0 tensor of B*5217
+            answers = torch.where(data['answers'].bool(), 1.0, -1.0).to(self.args.device)
             # Losses
             # Uncomment these if you want to assign less weight to 'other'
             # pos_weight = torch.ones_like(answers[0])
             # pos_weight[-1] = 0.1  # 'Other' has lower weight
             # and use the pos_weight argument
             # ^OPTIONAL: the expected performance can be achieved without this
-            loss = TODO
-
+            loss = (1.0 + (-scores * answers).exp()).log().mean()
+            answers = data['answers'].to(self.args.device)
             # Update
             if mode == 'train':
                 # optimize loss
-                TODO
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
 
             # Accuracy
             n_samples += len(scores)
-            found = (
-                F.one_hot(scores.argmax(1), scores.size(1))
-                * answers
-            ).sum(1)
             n_correct += (
                 F.one_hot(scores.argmax(1), scores.size(1))
                 * answers
             ).sum().item()  # checks if argmax matches any ground-truth
 
             # Logging
-            self.writer.add_scalar(
-                'Loss/' + mode, loss.item(),
-                epoch * len(self.data_loaders[mode]) + step
-            )
-            if mode == 'val' and step == 9:  # change this to show other images
+            if USE_WANDB:
+                wandb.log({
+                    'Loss/' + mode : loss.item()
+                })
+            #self.writer.add_scalar(
+            #    'Loss/' + mode, loss.item(),
+            #    epoch * len(self.data_loaders[mode]) + step
+            #)
+            #if mode == 'val' and step == 9:  # change this to show other images
+            if step % 200 == 0:  # change this to show other images
                 _n_show = 3  # how many images to plot
+                log_objects = [[] for _ in range(_n_show)]
+                answers = data['answers'].argmax(1).numpy()
+                pred_answers = scores.argmax(1).cpu().numpy()
                 for i in range(_n_show):
-                    self.writer.add_image(
-                        'Image%d' % i, data['orig_img'][i].cpu().numpy(),
-                        epoch * _n_show + i, dataformats='CHW'
-                    )
+                    #self.writer.add_image(
+                    #    'Image%d' % i, data['orig_img'][i].cpu().numpy(),
+                    #    epoch * _n_show + i, dataformats='CHW'
+                    #)
+                    image = data['orig_img'][i].cpu() #channel-first.(3*244*244)
+                    image = transforms.ToPILImage()(image).convert('RGB')
+                    log_objects[i].append(wandb.Image(image))
                     # add code to show the question
+                    log_objects[i].append(data['question'][i])
                     # the gt answer
+                    log_objects[i].append(self._id2answer[answers[i]])
                     # and the predicted answer
-                    # this is for debugging, to qualitatively monitor training
+                    log_objects[i].append(self._id2answer[pred_answers[i]])
+                    
+                # log table
+                wandb.log({
+                    "Samples/val":
+                    wandb.Table(
+                        columns=['image', 'question', 'gt_answer', 'pred_answer'],
+                        data=log_objects, allow_mixed_types= True
+                    )
+                })
             # add code to plot the current accuracy
         acc = n_correct / n_samples
-        print(acc)
+        print("[Epoch]", epoch, " accuracy: ", acc)
         # once training is complete and only for the validation set
         # show a bar plot of the answers' frequency sorted in descending order
         # you don't need to show names for the above
@@ -172,8 +196,7 @@ def main():
     args.test_image_dir = data_path + 'val2014/'
     args.test_q_path = data_path + 'OpenEnded_mscoco_val2014_questions.json'
     args.test_anno_path = data_path + 'mscoco_val2014_annotations.json'
-    if args.tensorboard_dir is None:
-        args.tensorboard_dir = args.model
+
     if args.ckpnt is None:
         args.ckpnt = args.model + '.pt'
     args.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
