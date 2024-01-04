@@ -17,6 +17,18 @@ Please refer to Week 11 of [this](https://visual-learning.cs.cmu.edu/f22/schedul
 
 
 
+### Lab 2.Visual QA with Cross-Attention [(Link)](https://github.com/visual-learning/vqa)
+
+*OUT: 12월 30일 수요일*
+
+*DUE: 01월 07일 일요일 23:59*
+
+Using cross-attention, we train on a visual QA task combining textual features from BERT and visual features from resnet. Then, we train on larger, deeper models, which do not fit in a single GPU, and compare performance.
+
+![Alt text](Lab2/git_images/transformer_vqa.jpg)
+
+
+
 ## Acknowledgement
 
 The assignments were taken from open courses at Carnegie Mellon University and any copyright belongs to whoever that prepared the assignments and the skeleton codes.
