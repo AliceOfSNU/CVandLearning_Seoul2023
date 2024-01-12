@@ -1,7 +1,7 @@
 This is a sample submission for **CMU Visual Learning class(2022)**.
 Skeleton code is provided by the TAs, and the network architecture + greedy decoding is also provided. My work is the implementation of the transformer and training.
 
-## Implemtation
+## Implementation
 
 ### The transformer decoder
 The image captioning transformer consists of an image encoder and a transformer decoder.
