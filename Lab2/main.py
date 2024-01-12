@@ -215,7 +215,6 @@ def main():
         image_filename_pattern="COCO_val2014_{}.jpg",
         answer_to_id_map=train_dataset.answer_to_id_map
     )
-    print(len(train_dataset), len(val_dataset))
     data_loaders = {
         mode: DataLoader(
             train_dataset if mode == 'train' else val_dataset,

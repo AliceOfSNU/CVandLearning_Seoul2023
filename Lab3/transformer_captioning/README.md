@@ -1,3 +1,6 @@
+original instructions from
+Visual Learning, Spring 2023 class.
+
 # Image Captioning with Transformers
 
 Please attempt this question sequentially, as the parts build upon previous sections. We will build a transformer decoder and use it for image captioning. Please read 

@@ -27,7 +27,17 @@ Using cross-attention, we train on a visual QA task combining textual features f
 
 ![Alt text](Lab2/git_images/transformer_vqa.jpg)
 
+### Lab 3.Transformer from scratch: captioning task [(Link)](https://github.com/visual-learning/transformers)
 
+*OUT: 01월 07일 일요일*
+
+*DUE: 01월 14일 일요일 23:59*
+
+A transformer decoder from scratch. following the famous paper 'Attention is All You Need', this is our own implementation of the transformer, including all layers like multi-headed attention, masked self attention and positional encoding.
+
+Trained on COCO captioning task. play with the number of heads and layers.
+
+![Alt text](Lab3/git_imgs/case1_train_4.png)
 
 ## Acknowledgement
 

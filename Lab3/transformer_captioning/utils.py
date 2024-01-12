@@ -106,7 +106,7 @@ class CocoDataset(Dataset):
         captions = self.data["%s_captions" % split][idx]
         image_idxs = self.data["%s_image_idxs" % split][idx]
         image_features = self.data["%s_features" % split][idx]
-        return image_features, captions.astype(np.long), image_idxs
+        return image_features, captions.astype(np.int32), image_idxs
 
 def image_from_url(url):
     """

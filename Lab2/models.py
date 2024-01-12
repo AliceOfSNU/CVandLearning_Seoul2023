@@ -30,7 +30,6 @@ class BaselineNet(nn.Module):
         self.text_encoder = RobertaModel.from_pretrained(t_type)
         for param in self.text_encoder.parameters():
             param.requires_grad = False
-        print(self.text_encoder)
         # Visual encoder
         r18 = resnet18(pretrained=True)
         self.vis_encoder = nn.Sequential(*(list(r18.children())[:-2]))
@@ -87,6 +86,11 @@ class TransformerNet(BaselineNet):
 
         # Classifier
         self.classifier = nn.Linear(256 + 256, n_answers)
+        
+        print("cross attention architecture:")
+        print(self.ca)
+        print("classifier architecture:")
+        print(self.classifier)
 
     def forward(self, image, question):
         """Forward pass, image (B, 3, 224, 224), qs list of str."""
@@ -104,7 +108,7 @@ class TransformerNet(BaselineNet):
                 text_feats, text_mask,
                 seq1_pos=vis_pos #only image positonal embedding is used.
             )
-
+        
         # Classifier 
         # average over the non-masked text_features(E=256) and all vis_features(E=256), concatenated
         # dimension 1 is the positional(SEQ_LEN) dim, 17 or 49.

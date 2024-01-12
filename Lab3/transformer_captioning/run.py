@@ -7,7 +7,7 @@ from transformer import TransformerDecoder
 from matplotlib import pyplot as plt
 
 set_all_seeds(42) ### DO NOT CHANGE THIS LINE
-exp_name = 'case1'
+exp_name = 'case2'
 
 train_dataset = CocoDataset(load_coco_data(max_train=1024), 'train')
 train_dataloader =  DataLoader(train_dataset, batch_size=64)
@@ -54,6 +54,7 @@ def vis_imgs(split):
       urls = data["%s_urls" % split][idxs]
       
       gt_captions = decode_captions(gt_captions, transformer.idx_to_word)
+      # you must not extend max_len above the decoder's setting.
       sample_captions = transformer.sample(features, max_length=30)
       sample_captions = decode_captions(sample_captions, transformer.idx_to_word)
       

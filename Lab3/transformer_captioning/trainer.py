@@ -2,6 +2,7 @@ import numpy as np
 from utils import  decode_captions
 
 import torch
+import torch.nn.functional as F
 
 
 class Trainer(object):
@@ -21,9 +22,17 @@ class Trainer(object):
         self.optim = torch.optim.Adam(self.model.parameters(), self.learning_rate)
 
     def loss(self, predictions, labels):
-        #TODO - Compute cross entropy loss between predictions and labels. 
+        #Compute cross entropy loss between predictions and labels. 
         #Make sure to compute this loss only for indices where label is not the null token.
         #The loss should be averaged over batch and sequence dimensions. 
+        
+        # predictions (B, S, V) V=1004
+        # labels are (B, S) IntTensor with vocab_id as values
+        # null_token = 0. exclude these
+        loss = F.cross_entropy(predictions.flatten(0, 1), 
+                               labels.flatten(0, 1).type(torch.LongTensor).cuda(), 
+                               reduction="mean", 
+                               ignore_index=0)
         return loss
     
     def val(self):
