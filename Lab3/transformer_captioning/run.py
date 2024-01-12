@@ -5,9 +5,10 @@ from torch.utils.data import DataLoader
 from trainer import Trainer
 from transformer import TransformerDecoder
 from matplotlib import pyplot as plt
+import numpy as np
 
 set_all_seeds(42) ### DO NOT CHANGE THIS LINE
-exp_name = 'case2'
+exp_name = 'case3'
 
 train_dataset = CocoDataset(load_coco_data(max_train=1024), 'train')
 train_dataloader =  DataLoader(train_dataset, batch_size=64)
@@ -22,15 +23,15 @@ transformer = TransformerDecoder(
           idx_to_word = train_dataset.data['idx_to_word'],
           input_dim=train_dataset.data['train_features'].shape[1],
           embed_dim=256,
-          num_heads=2,
-          num_layers=2,
+          num_heads=4,
+          num_layers=6,
           max_length=30,
           device = device
         )
 
 trainer = Trainer(transformer, train_dataloader, val_dataloader,
           num_epochs=100,
-          learning_rate=1e-4,
+          learning_rate=1e-3,
           device = device
         )
 
@@ -44,6 +45,10 @@ os.makedirs('plots', exist_ok=True)
 plt.title('Training loss history')
 plt.savefig('plots/' + exp_name + '_loss_out.png')
 
+# save run result
+loss_np = np.array(trainer.loss_history)
+with open(f'{exp_name}_train_loss.npy', 'wb') as f:
+  np.save(f, loss_np)
 
 def vis_imgs(split):
     data = {'train': train_dataset.data, 'val': val_dataset.data}[split]
@@ -67,7 +72,7 @@ def vis_imgs(split):
             plt.axis('off')
             plt.savefig('plots/' + exp_name + '_%s_%d.png' % (split, num_imgs))
             num_imgs += 1
-            if num_imgs >= 5: break
+            if num_imgs >= 8: break
       return 
 
 vis_imgs('train')

@@ -7,7 +7,8 @@ import urllib.request, urllib.error, urllib.parse, os, tempfile
 from torch.utils.data import Dataset
 from imageio import imread
 from PIL import Image
-
+import matplotlib
+import matplotlib.pyplot as plt
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 BASE_DIR = os.path.join(dir_path, "datasets/coco_captioning")
@@ -91,6 +92,29 @@ def decode_captions(captions, idx_to_word):
     if singleton:
         decoded = decoded[0]
     return decoded
+
+def plot_loss(exp, fmt="case{}_train_loss.npy"):
+    # plots training curve for past experiments
+    # loads data from .npz file with fmt
+    expnames = {
+        1: "H=2, L=2, 1e-4",
+        2: "H=4, L=6, 1e-4",
+        3: "H=4, L=6, 1e-3",
+    }
+    for e in exp:
+        fname = fmt.format(e)
+        with open(fname,'rb') as f:
+            y = np.load(f)
+            plt.plot(y, label=expnames[e])
+            
+    plt.legend(loc='upper right', ncol=1) 
+    plt.xlabel('Iteration')
+    plt.ylabel('Loss')
+    os.makedirs('plots', exist_ok=True)
+    plt.title('Training loss history')
+    plt.savefig('plots/losses.png')
+
+
 
 class CocoDataset(Dataset):
     def __init__(self, data, mode='train'):
