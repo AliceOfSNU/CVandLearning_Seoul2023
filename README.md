@@ -39,6 +39,17 @@ Trained on COCO captioning task. play with the number of heads and layers.
 
 ![Alt text](Lab3/git_imgs/case1_train_4.png)
 
+
+### Lab 4. Listen, attend, and spell: utterance to character with pBLSTM and CTC Loss
+
+*OUT: 01월 15일 월요일*
+
+*DUE: 01월 22일 월요일 23:59*
+
+This assignment implements the LAS model described here:
+[(Listen, Attend, Spell)](https://arxiv.org/pdf/1508.01211.pdf)
+It solves the utterance to character mapping problem. Using lstms and attention instead of HMM. 
+
 ## Acknowledgement
 
 The assignments were taken from open courses at Carnegie Mellon University and any copyright belongs to whoever that prepared the assignments and the skeleton codes.
