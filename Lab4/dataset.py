@@ -51,7 +51,7 @@ class AudioDataset(Dataset):
         self.length = filecnt
         print("\ttotal transcript cnt: ", self.length)
         
-    def int_to_str(x):
+    def int_to_str(self, x):
         if x == 63: return '[SOS]'
         elif x == 64: return '[EOS]'
         else: return chr(x) #32, 65~
@@ -90,3 +90,69 @@ class AudioDataset(Dataset):
         # TODO: perform transforms
         
         return padded_mfcc, padded_transcripts, torch.tensor(len_mfcc), torch.tensor(len_transcripts)
+    
+#class AudioDatasetTest(Dataset):
+    
+# dataset for part 2 of hw4
+# Memory Efficient in sense file loading happens in getitem to save RAM
+class MEAudioDataset(Dataset):
+    def __init__(self, split, transforms = None, cepstral=True):
+        self.VOCAB      = defines.VOCAB
+        self.cepstral   = cepstral
+
+        print("create memory efficient dataset from data ", base_dir)
+        
+        # TODO load mfcc data from files
+        if split == "train-clean-100" or split == "train-clean-360":
+            base_dir = BASE_DIR.format(split)   
+            mfcc_dir = os.path.join(base_dir, "mfcc")
+            transcript_dir = os.path.join(base_dir, "transcripts")
+
+            mfcc_files = os.listdir(mfcc_dir)
+            transcript_files = os.listdir(transcript_dir)
+
+        else:
+            base_dir = BASE_DIR.format("train-clean-100")
+            mfcc_dir = os.path.join(base_dir, "mfcc")
+            transcript_dir = os.path.join(base_dir, "transcripts")
+
+            mfcc_files = os.listdir(mfcc_dir)
+            transcript_files = os.listdir(transcript_dir)
+
+            base_dir = BASE_DIR.format("train-clean-360")
+            mfcc_dir = os.path.join(base_dir, "mfcc")
+            transcript_dir = os.path.join(base_dir, "transcripts")
+            
+            # add the list of mfcc and transcript paths from train-clean-360 to the list of paths  from train-clean-100
+            mfcc_files.extend(os.listdir(mfcc_dir))
+            transcript_files.extend(os.listdir(transcript_dir))
+
+        assert len(mfcc_files) == len(transcript_files)
+        self.length  = len(transcript_files)
+        
+        self.mfcc_files         = mfcc_files
+        self.transcript_files   = transcript_files
+        print("\ttotal mfcc cnt: ", len(self.mfcc_files))
+        print("\ttotal transcript cnt: ", len(self.transcript_files))
+        
+    
+    def __getitem__(self, idx):
+        # read file
+        return None
+    
+    def __len__(self):
+        return self.length
+    
+    def collate_fn(self, batch):
+        batch_x, batch_y, lengths_x, lengths_y = [], [], [], []
+
+        for x, y in batch:
+            # Add the mfcc, transcripts and their lengths to the lists created above
+            # TODO
+            pass
+
+        # pack the mfccs and transcripts using the pad_sequence function from pytorch
+        batch_x_pad =  None
+        batch_y_pad =  None
+
+        return batch_x_pad, batch_y_pad, torch.tensor(lengths_x), torch.tensor(lengths_y)

@@ -35,7 +35,8 @@ class pBLSTM(torch.nn.Module):
         super(pBLSTM, self).__init__()
         # TODO: single layer bidirectional LSTM
         self.blstm = nn.LSTM(
-            input_size, hidden_size, num_layers = 1, bidirectional=True,
+            # double input_size because trunc_reshape doubles feature dim
+            2*input_size, hidden_size, num_layers = 1, bidirectional=True,
         )
 
     def forward(self, x_packed): # x_packed is a PackedSequence
@@ -71,20 +72,43 @@ class pBLSTM(torch.nn.Module):
         return x, x_lens//2
     
 
+class LockedDropout(nn.Module):
+    def __init__(self, dropout=0.2):
+        self.dropout = dropout
+        super().__init__()
+
+    def forward(self, x):
+        if not self.training:
+            return x
+        
+        # TODO: unpack
+        x, lens = pad_packed_sequence(x, batch_first=False)
+        
+        # TODO: apply same dropout over all timesteps.
+        # choose random dropout mask for each batch.
+        m = x.data.new(1, *x.shape[1:]).bernoulli_(1 - self.dropout)
+        m.requires_grad = False
+        mask = m / (1 - self.dropout)
+        mask = mask.expand_as(x)
+        
+        # TODO: pack again and return
+        return pack_padded_sequence(mask * x, lens, batch_first=False, enforce_sorted=False)
+
 class Encoder(torch.nn.Module):
     '''
     The Encoder takes utterances as inputs and returns latent feature representations
     '''
-    def __init__(self, input_size, encoder_hidden_size,
+    def __init__(self, input_size, encoder_hidden_size, embedding_hidden_size,
         conv_kernel = 3, #3 or 5.
         conv_stride = 2, #reduces length in time dim.
+        dropout = 0.1,
                  ):
         super(Encoder, self).__init__()
 
         #TODO: increase the number of channels
         self.embedding = nn.Conv1d(
             input_size,
-            encoder_hidden_size,
+            embedding_hidden_size,
             kernel_size=conv_kernel,
             stride=conv_stride,
             padding = conv_kernel//2
@@ -94,7 +118,13 @@ class Encoder(torch.nn.Module):
         self.conv_kernel = conv_kernel
 
         self.pBLSTMs = torch.nn.Sequential( 
-            # TODO: Fill this up with pBLSTMs 
+            # TODO: Fill this up with pBLSTMs + locked dropouts
+            pBLSTM(embedding_hidden_size, encoder_hidden_size),
+            LockedDropout(dropout),
+            # double because pblstm is bidirectional. 
+            pBLSTM(2*encoder_hidden_size, encoder_hidden_size),
+            LockedDropout(dropout),
+            pBLSTM(2*encoder_hidden_size, encoder_hidden_size)
         )
 
     def forward(self, x, x_lens):
@@ -111,9 +141,35 @@ class Encoder(torch.nn.Module):
         x = pack_padded_sequence(x, x_lens, batch_first=True, enforce_sorted=False)
         
         # TODO: pyramidal LSTM
+        x = self.pBLSTMs(x)
+        
         # TODO: unpack
-        x, _ = pad_packed_sequence(x, batch_first=True)
-        return x
+        x, x_lens = pad_packed_sequence(x, batch_first=True)
+        return x, x_lens
+    
+class MLPDecoder(torch.nn.Module):
+
+    def __init__(self, embed_size, output_size= 41):
+        super().__init__()
+
+        self.fc1 = nn.Linear(embed_size, embed_size//2)
+        self.bn = torch.nn.BatchNorm1d(embed_size//2)
+        self.fc2 = nn.Linear(embed_size//2, output_size)
+        self.softmax = torch.nn.LogSoftmax(dim=2)
+
+    def forward(self, encoder_out):
+        #TODO call your MLP
+        out = self.fc1(encoder_out)
+        # apply batchnorm for each D-dimension.
+        # D statistics are calculated over B*T.. 'time-averaging'+'batch-averaging'
+        out = self.bn(out.transpose(1, 2)).transpose(1, 2)
+        out = self.fc2(F.relu(out))
+        
+        #TODO Think what should be the final output of the decoder for the classification
+        # returns log-probability of 41 classes,
+        # for each 'reduced-timestep'.
+        out = self.softmax(out)
+        return out
     
 class ASRModel(torch.nn.Module):
     def __init__(self, input_size, embed_size= 192, output_size= len(defines.PHONEMES)):
@@ -123,8 +179,8 @@ class ASRModel(torch.nn.Module):
         #    #TODO Add Time Masking/ Frequency Masking
         #    #Hint: See how to use PermuteBlock() function defined above
         #)
-        self.encoder        = Encoder(input_size, embed_size)
-        #self.decoder        =# TODO: Initialize Decoder
+        self.encoder        = Encoder(input_size, embed_size, embed_size, 3, 2, 0.1)
+        self.decoder        = MLPDecoder(2*embed_size, 41)
 
     def forward(self, x, lengths_x):
 

@@ -16,3 +16,20 @@ ARPAbet = list(CMUdict_ARPAbet.values())
 
 PHONEMES = CMUdict[:-2]
 LABELS = ARPAbet[:-2]
+
+VOCAB = [
+    '<pad>', '<sos>', '<eos>',
+    'A',   'B',    'C',    'D',
+    'E',   'F',    'G',    'H',
+    'I',   'J',    'K',    'L',
+    'M',   'N',    'O',    'P',
+    'Q',   'R',    'S',    'T',
+    'U',   'V',    'W',    'X',
+    'Y',   'Z',    "'",    ' ',
+]
+
+VOCAB_MAP = {VOCAB[i]:i for i in range(0, len(VOCAB))}
+
+PAD_TOKEN = VOCAB_MAP["<pad>"]
+SOS_TOKEN = VOCAB_MAP["<sos>"]
+EOS_TOKEN = VOCAB_MAP["<eos>"]
