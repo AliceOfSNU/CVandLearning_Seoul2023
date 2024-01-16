@@ -6,20 +6,22 @@ import defines
 
 import numpy as np 
 import os
-BASE_DIR = "../../data/{}"
+BASE_DIR = "../../data"
 
 class AudioDataset(Dataset):
-    def __init__(self, split):
+    def __init__(self, split, data_dir = BASE_DIR):
         # we will load all data at once.
         # memory issue?
         self.data = {
             "mfcc": [],
             "transcripts": []
         }
+        self.PHON2ALPHA = defines.CMUdict_ARPAbet
         self.PHONEMES = defines.PHONEMES
-        self.SOS_TOKEN = 63
-        self.EOS_TOKEN = 64
-        base_dir = BASE_DIR.format(split)
+        self.LABELS = defines.LABELS
+        self.LABEL2IDX = { v: k for k, v in enumerate(self.LABELS)}
+        
+        base_dir = os.path.join(data_dir, split)
         print("create dataset from data ", base_dir)
         
         # TODO load mfcc data from files
@@ -28,33 +30,37 @@ class AudioDataset(Dataset):
         for filename in os.listdir(mfcc_dir):
             full_filename = os.path.join(mfcc_dir, filename)
             with open(full_filename, "rb") as f:
-                self.data["mfcc"].append(np.load(f))
+                line = np.load(f)
+                self.data["mfcc"].append(line)
             filecnt += 1
         
         self.length = filecnt
         print("\ttotal mfcc cnt: ", self.length)
         
         # TODO load transcript from files
-        trans_dir = os.path.join(base_dir, "transcripts")
+        trans_dir = os.path.join(base_dir, "transcript")
         filecnt = 0
         for filename in os.listdir(trans_dir):
             full_filename = os.path.join(trans_dir, filename)
             with open(full_filename, "rb") as f:
                 line = np.load(f)
-                # TODO convert line to int32.
-                # maybe torch.Tensor conversion?
+                # TODO convert line to intTensor, 
+                # first map to char's by CMUdict_ARPAbet and convert to int
+                # SOS and EOS are dropped!
                 self.data["transcripts"].append(
-                    np.array([self.SOS_TOKEN] + [ord(tok) for tok in line[1:-1]] + [self.EOS_TOKEN])
+                    np.array([self.LABEL2IDX[self.PHON2ALPHA[tok]] for tok in line[1:-1]])
                     )
             filecnt += 1
+        
+        assert filecnt == self.length, "number of audio files and transcipt files should match"
         
         self.length = filecnt
         print("\ttotal transcript cnt: ", self.length)
         
-    def int_to_str(self, x):
-        if x == 63: return '[SOS]'
-        elif x == 64: return '[EOS]'
-        else: return chr(x) #32, 65~
+    def idx_to_str(self, x):
+        # input a idx and returns the corresponding phoneme
+        #   x Integer: index
+        return self.PHONEMES[x] #32, 65~
         
     def __getitem__(self, idx):
         return self.data["mfcc"][idx], self.data["transcripts"][idx]
@@ -80,7 +86,7 @@ class AudioDataset(Dataset):
         len_transcripts = []
         for mfcc, transcript in batch:
             mfccs.append(torch.as_tensor(mfcc))
-            transcripts.append(torch.as_tensor(transcript))
+            transcripts.append(torch.as_tensor(transcript, dtype=torch.long))
             len_mfcc.append(len(mfcc))
             len_transcripts.append(len(transcript))
             
@@ -89,7 +95,7 @@ class AudioDataset(Dataset):
         
         # TODO: perform transforms
         
-        return padded_mfcc, padded_transcripts, torch.tensor(len_mfcc), torch.tensor(len_transcripts)
+        return padded_mfcc, padded_transcripts, torch.tensor(len_mfcc, dtype=torch.long), torch.tensor(len_transcripts, dtype=torch.long)
     
 #class AudioDatasetTest(Dataset):
     
