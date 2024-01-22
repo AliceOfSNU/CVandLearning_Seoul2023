@@ -3,9 +3,9 @@ from dataset import AudioDataset
 from model import ASRModel
 import ctcdecode
 import defines
-import torch
+from trainer import Trainer
 
-#train_data = AudioDataset('train-clean-100', data_dir="data/ARPAbet_kaggle")
+train_data = AudioDataset('train-clean-100', data_dir="data/ARPAbet_kaggle")
 val_data = AudioDataset('dev-clean', data_dir="data/ARPAbet_kaggle")
 #test_data = AudioDatasetTest() #TODO
 
@@ -15,16 +15,17 @@ config = {
     "lr"         : 2e-3,
     "epochs"     : 50,
     "batch_size": 64,
+    "run_id": 0
 }
 
 # Do NOT forget to pass in the collate function as parameter while creating the dataloader
-#train_loader = DataLoader(
-#            train_data,
-#            batch_size=config["batch_size"],
-#            drop_last=True,
-#            shuffle=True,
-#            collate_fn=train_data.collate_fn
-#)
+train_loader = DataLoader(
+            train_data,
+            batch_size=config["batch_size"],
+            drop_last=True,
+            shuffle=True,
+            collate_fn=train_data.collate_fn
+)
 val_loader = DataLoader(
             val_data,
             batch_size=config["batch_size"],
@@ -39,14 +40,6 @@ model = ASRModel(
     embed_size= 64,
     output_size = len(defines.PHONEMES)
 )
-device = 'cuda' if torch.cuda.is_available() else "cpu"
-print("using device.. ", device)
-print(model.named_modules)
-model.to(device)
-
-criterion = torch.nn.CTCLoss(reduction='mean')
-optimizer =  torch.optim.AdamW(model.parameters(), config["lr"]) # What goes in here?
-
 # Declare the decoder. Use the CTC Beam Decoder to decode phonemes
 # CTC Beam Decoder Doc: https://github.com/parlance/ctcdecode
 decoder = ctcdecode.CTCBeamDecoder(
@@ -56,29 +49,13 @@ decoder = ctcdecode.CTCBeamDecoder(
     beta=0,
     cutoff_top_n=40,
     cutoff_prob=1.0,
-    beam_width=32, #this should not exceed 50
+    beam_width=4, #this should not exceed 50
     num_processes=4, #this should be ~#of cpus
     blank_id=0,
     log_probs_input=True
 )
 
-# test impl
-model.eval()
-
-for i, data in enumerate(val_loader, 0):
-    x, y, lx, ly = data
-    x, y = x.to(device), y.to(device)
-    h, lh = model(x, lx)
-    h = torch.permute(h, (1, 0, 2)) #B, T, D -> T, B, D
-    
-    optimizer.zero_grad()
-    #note h is in time-first layout
-    #h = (T, B, D) -> log_probs, y = (B, S) -> indexes(no 0! cls idx as LongTensor)
-    #lh = (B), ly = (B)
-    loss = criterion(h, y, lh, ly)
-    print(loss.item())
-    loss.backward()
-    optimizer.step()
-    
-    #print(calculate_levenshtein(h, y, lx, ly, decoder, LABELS))
-    break
+# go
+trainer = Trainer(model, val_loader, val_loader,
+                  decoder, config, verbose=True)
+trainer.train()
