@@ -76,7 +76,7 @@ for i, data in enumerate(val_loader, 0):
     #h = (T, B, D) -> log_probs, y = (B, S) -> indexes(no 0! cls idx as LongTensor)
     #lh = (B), ly = (B)
     loss = criterion(h, y, lh, ly)
-    print(loss)
+    print(loss.item())
     loss.backward()
     optimizer.step()
     

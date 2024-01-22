@@ -122,8 +122,6 @@ class Encoder(torch.nn.Module):
             pBLSTM(embedding_hidden_size, encoder_hidden_size),
             LockedDropout(dropout),
             # double because pblstm is bidirectional. 
-            pBLSTM(2*encoder_hidden_size, encoder_hidden_size),
-            LockedDropout(dropout),
             pBLSTM(2*encoder_hidden_size, encoder_hidden_size)
         )
 
@@ -179,7 +177,7 @@ class ASRModel(torch.nn.Module):
         #    #TODO Add Time Masking/ Frequency Masking
         #    #Hint: See how to use PermuteBlock() function defined above
         #)
-        self.encoder        = Encoder(input_size, embed_size, embed_size, 3, 2, 0.1)
+        self.encoder        = Encoder(input_size, embed_size, embed_size, conv_kernel=3, conv_stride=1, dropout=0.1)
         self.decoder        = MLPDecoder(2*embed_size, 41)
 
     def forward(self, x, lengths_x):
