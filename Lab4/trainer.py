@@ -3,7 +3,9 @@ from tqdm import tqdm
 from utils import calculate_levenshtein
 from defines import LABELS
 import os
+import wandb
 
+USE_WANDB = True
 BASE_DIR= "CVandLearning_Seoul2023/Lab4"
 class Trainer():
     # bsaic trainer class.
@@ -19,11 +21,20 @@ class Trainer():
         
         self.train_loader = train_loader
         self.val_loader = val_loader
-        self.lr = config["lr"]
-        self.nepochs = config["epochs"]
+
         self.run_id = config["run_id"]
         os.makedirs(os.path.join(BASE_DIR, f"model/{self.run_id}"), exist_ok=True)
-        
+        if USE_WANDB:
+            self.run = wandb.init(
+                name = "base", 
+                reinit = True, 
+                # run_id = ### Insert specific run id here if you want to resume a previous run
+                # resume = "must" ### You need this to resume previous runs, but comment out reinit = True when using this
+                project = "LAS_asr", 
+            )
+            
+        self.lr = config["lr"]
+        self.nepochs = config["epochs"]
         self.criterion = torch.nn.CTCLoss(reduction='mean')
         self.optimizer =  torch.optim.AdamW(model.parameters(), config["lr"]) # What goes in here?
         self.lr_schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', factor = 0.1, patience = 6)
@@ -59,7 +70,8 @@ class Trainer():
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
-                if i == 3: break
+                
+                # cleanup
                 del x, y, lx, ly, h, lh, loss
                 torch.cuda.empty_cache()
 
@@ -74,13 +86,23 @@ class Trainer():
             ## checkpointing
             if valid_loss < best_loss:
                 if self.verbose: print("best loss!")
+                best_loss = valid_loss
                 self.save_model(epoch, valid_loss, os.path.join(BASE_DIR, f"model/{self.run_id}/best.pt"))
             self.save_model(epoch, valid_loss, os.path.join(BASE_DIR, f"model/{self.run_id}/epoch{epoch}.pt"))
             ## checkpointing ends
             
             ## add epoch logs here
             print("\tVal Dist {:.04f}%\t Val Loss {:.04f}".format(valid_dist, valid_loss))
+            if USE_WANDB:
+                wandb.log({
+                    'train_loss': train_loss,
+                    'valid_dist': valid_dist,
+                    'valid_loss': valid_loss,
+                    'lr'        : float(self.optimizer.param_groups[0]['lr'])
+                })
             ## ^ add epoch logs here ^
+        if USE_WANDB:
+            self.run.finish() 
         return 
 
     def validate(self, phoneme_map=LABELS):

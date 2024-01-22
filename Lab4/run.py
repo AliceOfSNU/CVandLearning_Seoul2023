@@ -15,7 +15,7 @@ config = {
     "lr"         : 2e-3,
     "epochs"     : 50,
     "batch_size": 64,
-    "run_id": 0
+    "run_id": 1
 }
 
 # Do NOT forget to pass in the collate function as parameter while creating the dataloader
@@ -56,6 +56,6 @@ decoder = ctcdecode.CTCBeamDecoder(
 )
 
 # go
-trainer = Trainer(model, val_loader, val_loader,
+trainer = Trainer(model, train_loader, val_loader,
                   decoder, config, verbose=True)
 trainer.train()
