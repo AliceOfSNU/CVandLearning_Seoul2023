@@ -66,5 +66,5 @@ for i, data in enumerate(val_loader):
     x, y, lx, ly = data
     x, y = x.to(device), y.to(device)
 
-    output_logits, attn = model(x, lx)
+    output_logits, attn = model(x, lx, y=y)
     loss = model.compute_loss(output_logits, y)

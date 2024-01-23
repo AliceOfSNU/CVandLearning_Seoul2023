@@ -120,7 +120,7 @@ class Encoder(torch.nn.Module):
 
         self.lstm = nn.LSTM(
             embedding_hidden_size, encoder_hidden_size, 
-            num_layers = 1, bidirectional=True, dropout = 0.1
+            num_layers = 1, bidirectional=True
         )
         self.pBLSTMs = nn.Sequential( 
             # TODO: Fill this up with pBLSTMs + locked dropouts
@@ -144,7 +144,7 @@ class Encoder(torch.nn.Module):
         x = pack_padded_sequence(x, x_lens, batch_first=True, enforce_sorted=False)
         
         # TODO: pyramidal LSTM
-        x = self.lstm(x)
+        x, (hn, cn) = self.lstm(x)
         x = self.pBLSTMs(x)
         
         # TODO: unpack
@@ -152,12 +152,12 @@ class Encoder(torch.nn.Module):
         return x, x_lens
     
 class DotProductAttention(torch.nn.Module):
-    def __init__(self, input_dim, hidden_dim, dropout=0.1):
+    def __init__(self, dim_q, dim_kv, hidden_dim, dropout=0.1):
         super(DotProductAttention, self).__init__()
         self.hidden_dim = hidden_dim
-        self.query_proj = nn.Linear(input_dim, hidden_dim)
-        self.key_proj = nn.Linear(input_dim, hidden_dim)
-        self.value_proj = nn.Linear(input_dim, hidden_dim)
+        self.query_proj = nn.Linear(dim_q, hidden_dim)
+        self.key_proj = nn.Linear(dim_kv, hidden_dim)
+        self.value_proj = nn.Linear(dim_kv, hidden_dim)
         self.dropout = nn.Dropout(dropout)
         
         self.cache = {}
@@ -173,10 +173,10 @@ class DotProductAttention(torch.nn.Module):
         if "k" not in self.cache.keys() or "v" not in self.cache.keys():
             print("[err] compute_kv must be called before calling compute_context")
         
-        dot_product = torch.matmul(q, self.cache["key"].transpose(-2, -1))
+        dot_product = torch.matmul(q, self.cache["k"].transpose(-2, -1))
         attn = dot_product / math.sqrt(self.hidden_dim)
         attn = self.dropout(attn)
-        context_vec = torch.matmul(attn, self.cache["value"])
+        context_vec = torch.matmul(attn, self.cache["v"])
         
         if need_weights:
             return context_vec, attn
@@ -237,26 +237,26 @@ class AttentionDecoder(torch.nn.Module):
         output_logits = torch.empty((B, 0, self.output_dim))
         attentions = [] #cumulate attentions for later debugging
         
-        yD = self.embedding(y)
+        yD = self.embedding(y) #B, T, D
         
         hc1 = (torch.zeros((B, self.hidden_dim)), torch.zeros((B, self.hidden_dim)))
         hc2 = (torch.zeros((B, self.hidden_dim)), torch.zeros((B, self.hidden_dim)))
         for t in range(T):
             if teacher_forcing:
-                x = yD[:, t, :]
+                x = yD[:, t, :] #B, D
             else:
                 x = self.embedding(out)
             hc1 = self.lstm_cell1(x, hc1)
             hc2 = self.lstm_cell2(hc1[0], hc2)
-            ctx, attn = self.attender.compute_context(hc2[0], need_weights=True)
+            ctx, attn = self.attender.compute_context(hc2[0].unsqueeze(1), need_weights=True)
             attentions.append(attn)
-            out = self.softmax(self.CDN(torch.cat([hc2[0], ctx])))
-            output_logits = torch.cat([output_logits, out], dim=1)
+            out = self.softmax(self.CDN(torch.cat([hc2[0], ctx.squeeze(1)], dim = -1)))
+            output_logits = torch.cat([output_logits, out.unsqueeze(1)], dim=1)
             # decodes a sample.. (using random strategy)
             out = Categorical(logits=out).sample().unsqueeze(-1)
             output_idxs = torch.cat([output_idxs, out], dim=1)
             
-        attentions = torch.stack(attentions, dim = 1)
+        attentions = torch.cat(attentions, dim = 1) # B * T(=decode timesteps) * S(=kv length from encoder)
         return output_logits, attentions
         
 class ASRModel(torch.nn.Module):
@@ -286,7 +286,9 @@ class ASRModel_Attention(torch.nn.Module):
 
         # Pass the right parameters here
         self.listener = Encoder(input_size, embed_size, embed_size, conv_kernel=3, conv_stride=1, dropout=0.1)
-        self.attend = DotProductAttention(embed_size, embed_size, dropout=0.1)
+        self.attend = DotProductAttention(
+            dim_q=embed_size, dim_kv=2*embed_size, hidden_dim=embed_size, dropout=0.1
+        )
         self.speller = AttentionDecoder(self.attend, embed_size, output_size)
         self.output_size = output_size    
     
@@ -294,7 +296,7 @@ class ASRModel_Attention(torch.nn.Module):
         # dist(B * T * Vocab_size): logits
         # y(B * T)int64 indexes
         y_onehot = F.one_hot(y, self.output_size)
-        return  -(dist, y).sum()
+        return  -(dist* y_onehot).sum()
         
     def forward(self, x,lx,y=None, teacher_forcing_ratio=1):
         # Encode speech features
@@ -302,7 +304,7 @@ class ASRModel_Attention(torch.nn.Module):
 
         # We want to compute keys and values ahead of the decoding step, as they are constant for all timesteps
         # Set keys and values using the encoder outputs
-        self.attend.set_key_value(encoder_outputs)
+        self.attend.compute_kv(encoder_outputs)
 
         # Decode text with the speller using context from the attention
         outputs, attentions = self.speller(y, teacher_forcing=True)
