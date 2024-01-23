@@ -1,31 +1,36 @@
 from torch.utils.data import DataLoader
 from dataset import AudioDataset
-from model import ASRModel
+from model import ASRModel_Attention
 import ctcdecode
 import defines
 from trainer import Trainer
+import torch
+import gc
 
-train_data = AudioDataset('train-clean-100', data_dir="data/ARPAbet_kaggle")
+torch.cuda.empty_cache()
+gc.collect()
+
+#train_data = AudioDataset('train-clean-100', data_dir="data/ARPAbet_kaggle")
 val_data = AudioDataset('dev-clean', data_dir="data/ARPAbet_kaggle")
 #test_data = AudioDatasetTest() #TODO
 
 # run cofig
 config = {
     "beam_width" : 2,
-    "lr"         : 2e-3,
+    "lr"         : 2e-4,
     "epochs"     : 50,
     "batch_size": 64,
     "run_id": 1
 }
 
 # Do NOT forget to pass in the collate function as parameter while creating the dataloader
-train_loader = DataLoader(
-            train_data,
-            batch_size=config["batch_size"],
-            drop_last=True,
-            shuffle=True,
-            collate_fn=train_data.collate_fn
-)
+#train_loader = DataLoader(
+#            train_data,
+#            batch_size=config["batch_size"],
+#            drop_last=True,
+#            shuffle=True,
+#            collate_fn=train_data.collate_fn
+#)
 val_loader = DataLoader(
             val_data,
             batch_size=config["batch_size"],
@@ -35,7 +40,7 @@ val_loader = DataLoader(
 )
 #test_loader = #TODO
 
-model = ASRModel(
+model = ASRModel_Attention(
     input_size = 28, 
     embed_size= 64,
     output_size = len(defines.PHONEMES)
@@ -56,6 +61,10 @@ decoder = ctcdecode.CTCBeamDecoder(
 )
 
 # go
-trainer = Trainer(model, train_loader, val_loader,
-                  decoder, config, verbose=True)
-trainer.train()
+device = torch.device("cpu")
+for i, data in enumerate(val_loader):
+    x, y, lx, ly = data
+    x, y = x.to(device), y.to(device)
+
+    output_logits, attn = model(x, lx)
+    loss = model.compute_loss(output_logits, y)
