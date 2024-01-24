@@ -4,19 +4,31 @@ from model import ASRModel
 import ctcdecode
 import defines
 from trainer import Trainer
+import numpy as np
+import torch
 
 train_data = AudioDataset('train-clean-100', data_dir="data/ARPAbet_kaggle")
 val_data = AudioDataset('dev-clean', data_dir="data/ARPAbet_kaggle")
 #test_data = AudioDatasetTest() #TODO
-
 # run cofig
 config = {
-    "beam_width" : 2,
+    "beam_width" : 3,
     "lr"         : 2e-3,
     "epochs"     : 50,
     "batch_size": 64,
-    "run_id": 2
+    "encoder_cnn_kernel": 3,
+    "encoder_cnn_layers": 3,
+    "dropout": 0.1,
+    "mlp_layers": 2,
+    "hidden_size": 64,
+    "run_id": "base_64_residual",
+    "notes": "encoder has residual block",
+    "dataset": "ARPAbet_kaggle/train-clean-100",
+    "seed":12
 }
+
+np.random.seed(config["seed"])
+torch.manual_seed(config["seed"])
 
 # Do NOT forget to pass in the collate function as parameter while creating the dataloader
 train_loader = DataLoader(
@@ -36,8 +48,10 @@ val_loader = DataLoader(
 #test_loader = #TODO
 
 model = ASRModel(
-    input_size = 28, 
-    embed_size= 64,
+    input_size = 27, 
+    embed_size= config["hidden_size"],
+    conv_kernel = config["encoder_cnn_kernel"],
+    dropout= config["dropout"],
     output_size = len(defines.PHONEMES)
 )
 # Declare the decoder. Use the CTC Beam Decoder to decode phonemes

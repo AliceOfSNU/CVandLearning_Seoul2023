@@ -30,8 +30,12 @@ class AudioDataset(Dataset):
         for filename in os.listdir(mfcc_dir):
             full_filename = os.path.join(mfcc_dir, filename)
             with open(full_filename, "rb") as f:
-                line = np.load(f)
-                self.data["mfcc"].append(line)
+                data = np.load(f)
+                # normalize data here
+                data = data[:, :27]
+                data = data - data.mean(axis = 0, keepdims=True) #normalize along time axis
+                #
+                self.data["mfcc"].append(data)
             filecnt += 1
         
         self.length = filecnt

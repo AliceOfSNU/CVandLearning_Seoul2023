@@ -5,7 +5,7 @@ from defines import LABELS
 import os
 import wandb
 
-USE_WANDB = True
+USE_WANDB = False
 BASE_DIR= "CVandLearning_Seoul2023/Lab4"
 class Trainer():
     # bsaic trainer class.
@@ -23,21 +23,23 @@ class Trainer():
         self.val_loader = val_loader
 
         self.run_id = config["run_id"]
+        config.pop("run_id")
         os.makedirs(os.path.join(BASE_DIR, f"model/{self.run_id}"), exist_ok=True)
         if USE_WANDB:
             self.run = wandb.init(
-                name = "base", 
+                name = self.run_id, 
                 reinit = True, 
                 # run_id = ### Insert specific run id here if you want to resume a previous run
                 # resume = "must" ### You need this to resume previous runs, but comment out reinit = True when using this
                 project = "LAS_asr", 
+                config=config
             )
             
         self.lr = config["lr"]
         self.nepochs = config["epochs"]
         self.criterion = torch.nn.CTCLoss(reduction='mean')
         self.optimizer =  torch.optim.AdamW(model.parameters(), config["lr"]) # What goes in here?
-        self.lr_schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', factor = 0.2, patience = 2)
+        self.lr_schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', threshold=0.001, factor = 0.2, patience = 2)
         
     def train(self):
         best_loss = 10e6

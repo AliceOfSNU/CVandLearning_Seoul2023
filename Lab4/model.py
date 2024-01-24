@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
 from torch.distributions.categorical import Categorical
+from torchaudio.transforms import FrequencyMasking, TimeMasking
 import random
 import numpy as np
 import defines
@@ -125,20 +126,20 @@ class Encoder(torch.nn.Module):
         super(Encoder, self).__init__()
 
         #increase the number of channels
-        self.embedding = nn.Conv1d(
-            input_size,
-            embedding_hidden_size,
-            kernel_size=conv_kernel,
-            stride=conv_stride,
-            padding = conv_kernel//2
-        )
-        
-        #self.embedding = nn.Sequential(
-        #    nn.Conv1d(input_size, embedding_hidden_size, kernel_size=conv_kernel, stride=conv_stride, padding = conv_kernel//2),
-        #    nn.BatchNorm1d(embedding_hidden_size),
-        #    nn.ReLU(),
-        #    ResidualBlock(embedding_hidden_size, kernel_size = conv_kernel),
+        #self.embedding = nn.Conv1d(
+        #    input_size,
+        #    embedding_hidden_size,
+        #    kernel_size=conv_kernel,
+        #    stride=conv_stride,
+        #    padding = conv_kernel//2
         #)
+        
+        self.embedding = nn.Sequential(
+            nn.Conv1d(input_size, embedding_hidden_size, kernel_size=conv_kernel, stride=conv_stride, padding = conv_kernel//2),
+            nn.BatchNorm1d(embedding_hidden_size),
+            nn.ReLU(),
+            ResidualBlock(embedding_hidden_size, kernel_size = conv_kernel),
+        )
         self.conv_stride = conv_stride
         self.conv_padding = conv_kernel//2
         self.conv_kernel = conv_kernel
@@ -214,21 +215,21 @@ class MLPDecoder(torch.nn.Module):
         super(MLPDecoder, self).__init__()
 
         self.fc1 = nn.Linear(embed_size, embed_size//2)
-        self.bn = torch.nn.BatchNorm1d(embed_size//2)
-        self.activation = torch.nn.ReLU()
+        self.bn = nn.BatchNorm1d(embed_size//2)
+        self.activation = nn.ReLU()
         self.fc2 = nn.Linear(embed_size//2, output_size)
-        self.softmax = torch.nn.LogSoftmax(dim=2)
+        self.softmax = nn.LogSoftmax(dim=2)
 
     def forward(self, encoder_out):
-        #TODO call your MLP
+        # call your MLP
         out = self.fc1(encoder_out)
-        out = self.activation(out)
         # apply batchnorm for each D-dimension.
         # D statistics are calculated over B*T.. 'time-averaging'+'batch-averaging'
         out = self.bn(out.transpose(1, 2)).transpose(1, 2)
-        out = self.fc2(F.relu(out))
+        out = self.activation(out)
+        out = self.fc2(out)
         
-        #TODO Think what should be the final output of the decoder for the classification
+        # Think what should be the final output of the decoder for the classification
         # returns log-probability of 41 classes,
         # for each 'reduced-timestep'.
         out = self.softmax(out)
@@ -287,20 +288,24 @@ class AttentionDecoder(torch.nn.Module):
         return output_logits, attentions
         
 class ASRModel(torch.nn.Module):
-    def __init__(self, input_size, embed_size= 192, output_size= len(defines.PHONEMES)):
+    def __init__(self, input_size, embed_size= 192, 
+                 conv_kernel = 3, 
+                 output_size= len(defines.PHONEMES),
+                 dropout = 0.1):
         super().__init__()
 
-        #self.augmentations  = torch.nn.Sequential(
-        #    #TODO Add Time Masking/ Frequency Masking
-        #    #Hint: See how to use PermuteBlock() function defined above
-        #)
-        self.encoder        = Encoder(input_size, embed_size, embed_size, conv_kernel=3, conv_stride=1, dropout=0.1)
+        self.augmentations  = torch.nn.Sequential(
+            #Add Time Masking/ Frequency Masking
+            FrequencyMasking(freq_mask_param=6),
+            TimeMasking(time_mask_param=80),
+        )
+        self.encoder        = Encoder(input_size, embed_size, embed_size, conv_kernel=conv_kernel, conv_stride=1, dropout=dropout)
         self.decoder        = MLPDecoder(2*embed_size, 41)
 
     def forward(self, x, lengths_x):
 
-        #if self.training:
-        #    x = self.augmentations(x)
+        if self.training:
+            x = self.augmentations(x.transpose(-1, -2)).transpose(-1, -2)
 
         encoder_out, encoder_lens   = self.encoder(x, lengths_x)
         decoder_out                 = self.decoder(encoder_out)
