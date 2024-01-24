@@ -37,7 +37,7 @@ class Trainer():
         self.nepochs = config["epochs"]
         self.criterion = torch.nn.CTCLoss(reduction='mean')
         self.optimizer =  torch.optim.AdamW(model.parameters(), config["lr"]) # What goes in here?
-        self.lr_schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', factor = 0.1, patience = 6)
+        self.lr_schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', factor = 0.2, patience = 2)
         
     def train(self):
         best_loss = 10e6
@@ -88,7 +88,8 @@ class Trainer():
                 if self.verbose: print("best loss!")
                 best_loss = valid_loss
                 self.save_model(epoch, valid_loss, os.path.join(BASE_DIR, f"model/{self.run_id}/best.pt"))
-            self.save_model(epoch, valid_loss, os.path.join(BASE_DIR, f"model/{self.run_id}/epoch{epoch}.pt"))
+            if epoch % 5 == 0:
+                self.save_model(epoch, valid_loss, os.path.join(BASE_DIR, f"model/{self.run_id}/epoch{epoch}.pt"))
             ## checkpointing ends
             
             ## add epoch logs here

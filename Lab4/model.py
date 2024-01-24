@@ -95,6 +95,24 @@ class LockedDropout(nn.Module):
         # TODO: pack again and return
         return pack_padded_sequence(mask * x, lens, batch_first=False, enforce_sorted=False)
 
+class ResidualBlock(nn.Module):
+    def __init__ (self, num_channels, kernel_size=3):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = nn.Conv1d(num_channels, num_channels, kernel_size, padding = kernel_size//2)
+        self.bn1 = nn.BatchNorm1d(num_channels)
+        self.activ1 = nn.ReLU()
+        self.conv2 = nn.Conv1d(num_channels, num_channels, kernel_size, padding = kernel_size//2)
+        self.bn2 = nn.BatchNorm1d(num_channels)
+        self.activ2 = nn.ReLU()
+    
+    def forward(self, x):
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.activ1(out) #bn is done for each channel
+        out = self.conv2(out)
+        out = self.bn2(out)
+        return self.activ2(out + x)
+    
 class Encoder(torch.nn.Module):
     '''
     The Encoder takes utterances as inputs and returns latent feature representations
@@ -106,7 +124,7 @@ class Encoder(torch.nn.Module):
                  ):
         super(Encoder, self).__init__()
 
-        #TODO: increase the number of channels
+        #increase the number of channels
         self.embedding = nn.Conv1d(
             input_size,
             embedding_hidden_size,
@@ -114,6 +132,13 @@ class Encoder(torch.nn.Module):
             stride=conv_stride,
             padding = conv_kernel//2
         )
+        
+        #self.embedding = nn.Sequential(
+        #    nn.Conv1d(input_size, embedding_hidden_size, kernel_size=conv_kernel, stride=conv_stride, padding = conv_kernel//2),
+        #    nn.BatchNorm1d(embedding_hidden_size),
+        #    nn.ReLU(),
+        #    ResidualBlock(embedding_hidden_size, kernel_size = conv_kernel),
+        #)
         self.conv_stride = conv_stride
         self.conv_padding = conv_kernel//2
         self.conv_kernel = conv_kernel
@@ -131,23 +156,23 @@ class Encoder(torch.nn.Module):
         )
 
     def forward(self, x, x_lens):
-        #TODO: x
+        #channel first layout. time dim goes last
         x = x.transpose(-1, -2)
         x = self.embedding(x)
         x = x.transpose(-1, -2)
         
-        #TODO: modify x_lens
+        #modify x_lens
         if self.conv_stride != 1:
             x_lens = 1 + (x_lens - self.conv_kernel + 2 * self.conv_padding)//self.conv_stride
             
-        #TODO: pack
+        #pack
         x = pack_padded_sequence(x, x_lens, batch_first=True, enforce_sorted=False)
         
-        # TODO: pyramidal LSTM
+        #pyramidal LSTM
         x, (hn, cn) = self.lstm(x)
         x = self.pBLSTMs(x)
         
-        # TODO: unpack
+        #unpack
         x, x_lens = pad_packed_sequence(x, batch_first=True)
         return x, x_lens
     
@@ -190,12 +215,14 @@ class MLPDecoder(torch.nn.Module):
 
         self.fc1 = nn.Linear(embed_size, embed_size//2)
         self.bn = torch.nn.BatchNorm1d(embed_size//2)
+        self.activation = torch.nn.ReLU()
         self.fc2 = nn.Linear(embed_size//2, output_size)
         self.softmax = torch.nn.LogSoftmax(dim=2)
 
     def forward(self, encoder_out):
         #TODO call your MLP
         out = self.fc1(encoder_out)
+        out = self.activation(out)
         # apply batchnorm for each D-dimension.
         # D statistics are calculated over B*T.. 'time-averaging'+'batch-averaging'
         out = self.bn(out.transpose(1, 2)).transpose(1, 2)

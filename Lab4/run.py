@@ -15,7 +15,7 @@ config = {
     "lr"         : 2e-3,
     "epochs"     : 50,
     "batch_size": 64,
-    "run_id": 1
+    "run_id": 2
 }
 
 # Do NOT forget to pass in the collate function as parameter while creating the dataloader
