@@ -24,7 +24,7 @@ class AudioDataset(Dataset):
         base_dir = os.path.join(data_dir, split)
         print("create dataset from data ", base_dir)
         
-        # TODO load mfcc data from files
+        #load mfcc data from files
         mfcc_dir = os.path.join(base_dir, "mfcc")
         filecnt = 0
         for filename in os.listdir(mfcc_dir):
@@ -41,14 +41,14 @@ class AudioDataset(Dataset):
         self.length = filecnt
         print("\ttotal mfcc cnt: ", self.length)
         
-        # TODO load transcript from files
+        # load transcript from files
         trans_dir = os.path.join(base_dir, "transcript")
         filecnt = 0
         for filename in os.listdir(trans_dir):
             full_filename = os.path.join(trans_dir, filename)
             with open(full_filename, "rb") as f:
                 line = np.load(f)
-                # TODO convert line to intTensor, 
+                # convert line to intTensor, 
                 # first map to char's by CMUdict_ARPAbet and convert to int
                 # SOS and EOS are dropped!
                 self.data["transcripts"].append(
@@ -106,36 +106,34 @@ class AudioDataset(Dataset):
 # dataset for part 2 of hw4
 # Memory Efficient in sense file loading happens in getitem to save RAM
 class MEAudioDataset(Dataset):
-    def __init__(self, split, transforms = None, cepstral=True):
+    def __init__(self, split, transforms = None, cepstral=True, base_dir = BASE_DIR):
         self.VOCAB      = defines.VOCAB
+        self.VOCAB_MAP = defines.VOCAB_MAP
         self.cepstral   = cepstral
 
-        print("create memory efficient dataset from data ", base_dir)
+        print("create memory efficient dataset from data ", os.path.join(base_dir, split))
         
-        # TODO load mfcc data from files
-        if split == "train-clean-100" or split == "train-clean-360":
-            base_dir = BASE_DIR.format(split)   
-            mfcc_dir = os.path.join(base_dir, "mfcc")
-            transcript_dir = os.path.join(base_dir, "transcripts")
+        # load mfcc data from files
+        if split == "train-clean-100" or split == "train-clean-360" or split == "dev-clean":
+            mfcc_dir = os.path.join(base_dir, split, "mfcc")
+            transcript_dir = os.path.join(base_dir, split, "transcripts")
 
-            mfcc_files = os.listdir(mfcc_dir)
-            transcript_files = os.listdir(transcript_dir)
+            mfcc_files = [os.path.join(mfcc_dir, fname) for fname in os.listdir(mfcc_dir)]
+            transcript_files = [os.path.join(transcript_dir, fname)for fname in os.listdir(transcript_dir)]
 
-        else:
-            base_dir = BASE_DIR.format("train-clean-100")
-            mfcc_dir = os.path.join(base_dir, "mfcc")
-            transcript_dir = os.path.join(base_dir, "transcripts")
+        else: #both 100 + 360 == 460 dataset
+            mfcc_dir = os.path.join(base_dir, "train-clean-100", "mfcc")
+            transcript_dir = os.path.join(base_dir, "train-clean-100", "transcripts")
 
-            mfcc_files = os.listdir(mfcc_dir)
-            transcript_files = os.listdir(transcript_dir)
+            mfcc_files = [os.path.join(mfcc_dir, fname) for fname in os.listdir(mfcc_dir)]
+            transcript_files = [os.path.join(transcript_dir, fname) for fname in os.listdir(transcript_dir)]
 
-            base_dir = BASE_DIR.format("train-clean-360")
-            mfcc_dir = os.path.join(base_dir, "mfcc")
-            transcript_dir = os.path.join(base_dir, "transcripts")
+            mfcc_dir = os.path.join(base_dir, "train-clean-360", "mfcc")
+            transcript_dir = os.path.join(base_dir, "train-clean-360", "transcripts")
             
             # add the list of mfcc and transcript paths from train-clean-360 to the list of paths  from train-clean-100
-            mfcc_files.extend(os.listdir(mfcc_dir))
-            transcript_files.extend(os.listdir(transcript_dir))
+            mfcc_files.extend([os.path.join(mfcc_dir, fname) for fname in os.listdir(mfcc_dir)])
+            transcript_files.extend([os.path.join(transcript_dir, fname) for fname in os.listdir(transcript_dir)])
 
         assert len(mfcc_files) == len(transcript_files)
         self.length  = len(transcript_files)
@@ -148,21 +146,44 @@ class MEAudioDataset(Dataset):
     
     def __getitem__(self, idx):
         # read file
-        return None
+        with open(self.mfcc_files[idx], "rb") as f:
+            mfcc = np.load(f)
+        
+        with open(self.transcript_files[idx], "rb") as f:
+            transcript = np.load(f)
+            # remove SOS so we can compare directly to outputs
+            transcript = np.array([self.VOCAB_MAP[tok] for tok in transcript[1:]])
+            
+        return mfcc, transcript
     
     def __len__(self):
         return self.length
     
     def collate_fn(self, batch):
-        batch_x, batch_y, lengths_x, lengths_y = [], [], [], []
+        mfccs, transcripts, mfcc_lens, transcript_lens = [], [], [], []
 
-        for x, y in batch:
-            # Add the mfcc, transcripts and their lengths to the lists created above
-            # TODO
-            pass
+        for mfcc, transcript in batch:
+            mfccs.append(torch.as_tensor(mfcc))
+            transcripts.append(torch.as_tensor(transcript, dtype=torch.long))
+            mfcc_lens.append(len(mfcc))
+            transcript_lens.append(len(transcript))
+            
+        padded_mfcc = pad_sequence(mfccs, batch_first=True)
+        padded_transcripts = pad_sequence(transcripts, batch_first=True)
 
-        # pack the mfccs and transcripts using the pad_sequence function from pytorch
-        batch_x_pad =  None
-        batch_y_pad =  None
+        return padded_mfcc, padded_transcripts, torch.tensor(mfcc_lens, dtype=torch.long), torch.tensor(transcript_lens, dtype=torch.long)
+    
+    
+# dataset checker
+def verify_dataset(dataset, partition= 'train-clean-100'):
+    print("\nPartition loaded     : ", partition)
+    if partition != 'test-clean':
+        print("Max mfcc length          : ", np.max([data[0].shape[0] for data in dataset]))
+        print("Avg mfcc length          : ", np.mean([data[0].shape[0] for data in dataset]))
+        print("Max transcript length    : ", np.max([data[1].shape[0] for data in dataset]))
+        print("Max transcript length    : ", np.mean([data[1].shape[0] for data in dataset]))
+    else:
+        print("Max mfcc length          : ", np.max([data.shape[0] for data in dataset]))
+        print("Avg mfcc length          : ", np.mean([data.shape[0] for data in dataset]))
 
-        return batch_x_pad, batch_y_pad, torch.tensor(lengths_x), torch.tensor(lengths_y)
+
