@@ -81,3 +81,28 @@ def calculate_levenshtein(output, label, output_lens, label_lens, decoder, PHONE
     dist /= batch_size
     return dist
 
+
+# schedular
+class CustomSchedular():
+    def __init__(self, begin_value, begin_time, step_amount, step_every, value_limit=None) -> None:
+        self.value = begin_value
+        self.value_limit = value_limit
+        self.prev = begin_time - step_every
+        self.step_every = step_every
+        self.step_amount = step_amount
+        self.go = False
+    
+    def step(self, curr):
+        if curr - self.prev >= self.step_every:
+            self.prev = curr
+            self.go = True
+        #logic: step the value every call, in 5 mini-steps
+        #assumes curr increments by 1
+        if self.go and curr - self.prev < 5:
+            ministep = self.step_amount/5
+            if self.value_limit is not None and self.value - ministep < self.value_limit: return self.value
+            self.value -= ministep
+        elif self.go and curr - self.prev >= 5:
+            #perform exact value calculation (remove fp-errors) here if needed
+            self.go=False
+        return self.value

@@ -28,7 +28,9 @@ config = {
     "encoder_cnn_layers": 6,
     "encoder_cnn_channels": [64], #27 -> [/*here*/]
     "dropout": 0.1,
+    "n_decodes": 10,
     "mlp_layers": 2,
+    "tf_schedule": "Reduce by 0.1 every 15 epochs",
     "encoder_hidden_size": 64,
     "attn_hidden_size": 128,
     "decoder_hidden_size": 128,

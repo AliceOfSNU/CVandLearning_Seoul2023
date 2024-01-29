@@ -1,11 +1,13 @@
 import torch
 from tqdm import tqdm
-from utils import calculate_levenshtein, indices_to_chars
+from utils import calculate_levenshtein, indices_to_chars, CustomSchedular
 from defines import VOCAB, PAD_TOKEN
 import os
 import wandb
 import matplotlib.pyplot as plt
-USE_WANDB = True
+import Levenshtein
+
+USE_WANDB = False
 BASE_DIR= "CVandLearning_Seoul2023/Lab4"
 
 class Trainer2():
@@ -45,8 +47,9 @@ class Trainer2():
                 reduction='mean',
             )
         self.optimizer =  torch.optim.AdamW(model.parameters(), config["lr"]) # What goes in here?
-        self.lr_schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', threshold=0.001, factor = 0.2, patience = 3, cooldown=3)
-        self.tf_schedule = 1.0 # modify this value -> do not go below 0.5
+        self.lr_schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', threshold=0.0001, factor = 0.2, patience = 3, cooldown=3)
+        #self.tf_schedule = CustomSchedular(1.0, 20, 0.1, 15, 0.6) #1.0->0.9 ->..0.6 every 15 epochs starting from 20
+        self.tf_schedule = CustomSchedular(1.0, 2, 0.2, 7, 0.6) #1.0->0.9 ->..0.6 every 15 epochs starting from 20
         
     def train(self):
         best_loss = 10e6
@@ -61,7 +64,7 @@ class Trainer2():
                 x, y, lx, ly = data
                 x, y = x.to(self.device), y.to(self.device)
 
-                h, attn = self.model(x, lx, y,teacher_forcing_ratio= self.tf_schedule)
+                h, attn = self.model(x, lx, y,teacher_forcing_ratio= self.tf_schedule.value)
                 loss = self.criterion(h.transpose(-1, -2), y)
 
                 epoch_loss += loss.item()
@@ -84,7 +87,7 @@ class Trainer2():
                 torch.cuda.empty_cache()
                 
                 ### TESTING ONLY.
-                #if i == 2: break
+                if i == 3: break
 
             batch_bar.close() 
             train_loss = epoch_loss / len(self.train_loader)
@@ -93,6 +96,9 @@ class Trainer2():
             # validate
             valid_loss, valid_dist, examples = self.validate(epoch)
             self.lr_schedule.step(valid_loss) #step lr decay
+            
+            # schedule tf ratio
+            self.tf_schedule.step(epoch)
             
             ## checkpointing
             if valid_loss < best_loss:
@@ -112,7 +118,7 @@ class Trainer2():
                     'valid_dist': valid_dist,
                     'valid_loss': valid_loss,
                     'lr'        : float(self.optimizer.param_groups[0]['lr']),
-                    'tf_rate': self.tf_schedule,
+                    'tf_rate': self.tf_schedule.value,
                     'examples': examples
                 })
             ## ^ add epoch logs here ^
@@ -132,28 +138,40 @@ class Trainer2():
             x, y = x.to(self.device), y.to(self.device)
 
             with torch.inference_mode():
-                h, attn = self.model(x, lx, y, teacher_forcing_ratio= self.tf_schedule)
+                h, attn = self.model(x, lx, y, teacher_forcing_ratio= self.tf_schedule.value)
                 loss = self.criterion(h.transpose(-1, -2), y)
 
             # two stats to compute (with tqdm bar)
             # one is loss
             total_loss += loss.item()
             # other is lv_distance
-            vdist += calculate_levenshtein(h, y, lx, ly, self.decoder, phoneme_map)
 
+            # greedy decodes
+            #pred_strings = self.decoder.decode_prediction(h[:3,:,:]) greedy decodes
+            #vdist += calculate_levenshtein(h, y, lx, ly, self.decoder, phoneme_map)
+            
+            # sampling decoders
+            decodes, log_probs = self.model.generate_decodes(10, x, lx, y)
+            pred_strings = [indices_to_chars(line, phoneme_map) for line in decodes.cpu().numpy()]
+            label_strings = [indices_to_chars(line, phoneme_map) for line in y.cpu().numpy()]
+            dist = 0 #batch
+            for pred_string, label_string in zip(pred_strings, label_strings):
+                dist += Levenshtein.distance(pred_string, label_string)
+            vdist += dist/x.shape[0] 
+            
             if i == 0: # print first three samples
-                pred_strings = self.decoder.decode_prediction(h[:3,:,:])
-                label_strings = [indices_to_chars(line, VOCAB) for line in y[:3,:].cpu().numpy()]
                 plt.imshow(attn[0,:,:].cpu().detach().numpy())          
                 plt.title('[epoch]%s\n%s\nGT:%s' % (epoch, pred_strings[0][:len(label_strings[0])], label_strings[0]), fontdict = {'fontsize' : 12})
                 plt.axis('off')
                 plt.savefig('plots/' + self.run_id + '_epoch%d.png' % epoch)
                 
                 example = {
-                    "keys" : ["pred_string", "label_string", "attn"],
-                    "values": [[pred_strings[i], label_strings[i], wandb.Image(wandb.Image.to_uint8(attn[i,:,:].cpu().detach().numpy()))] for i in range(3)]
+                    "keys" : ["pred_string","log_prob" ,"label_string", "attn"],
+                    "values": [[pred_strings[i], log_probs[i].item(), label_strings[i], wandb.Image(wandb.Image.to_uint8(attn[i,:,:].cpu().detach().numpy()))] for i in range(3)]
                 }
-                
+                #test only
+                break     
+            
             batch_bar.set_postfix(
                 loss="{:.04f}".format(total_loss/ (i + 1)), 
                 dist="{:.04f}".format(vdist / (i + 1))

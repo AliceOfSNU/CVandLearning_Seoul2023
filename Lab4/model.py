@@ -302,9 +302,10 @@ class AttentionDecoder(torch.nn.Module):
         self.output_dim = output_dim
         
         
-    def forward(self, encoder_outputs, y=None, teacher_forcing_ratio = 1.0):
-        # calculate keys and values once!
-        self.attend.compute_kv(encoder_outputs)
+    def forward(self, encoder_outputs, y=None, 
+                teacher_forcing_ratio = 1.0, 
+                need_weights=False,
+                return_probs=False):
         B = encoder_outputs.shape[0] 
         
         if y is None: #inference mode
@@ -318,6 +319,8 @@ class AttentionDecoder(torch.nn.Module):
         out = out.to(encoder_outputs.device)
         output_logits = []
         attentions = [] #cumulate attentions for later debugging
+        log_probs = [] #sum of categorical log probs of drawn tokens at each timestep.
+        output_chars = [] #drawn character(index) at each step, as Long Tensors
         
         #hc1 = (torch.zeros((B, self.hidden_dim)), torch.zeros((B, self.hidden_dim)))
         #hc2 = (torch.zeros((B, self.hidden_dim)), torch.zeros((B, self.hidden_dim)))
@@ -333,16 +336,31 @@ class AttentionDecoder(torch.nn.Module):
             else:
                 hc1 = self.lstm_cell1(x, hc1)
                 hc2 = self.lstm_cell2(hc1[0], hc2)
-            ctx, attn = self.attend.compute_context(hc2[0].unsqueeze(1), need_weights=True)
-            attentions.append(attn)
+            if need_weights:
+                ctx, attn = self.attend.compute_context(hc2[0].unsqueeze(1), need_weights=True)
+                attentions.append(attn)
+            else: 
+                ctx = self.attend.compute_context(hc2[0].unsqueeze(1), need_weights=False)
+                
             out = self.CDN(torch.cat([hc2[0], ctx.squeeze(1)], dim = -1))
             output_logits.append(out.unsqueeze(1))
-            # draws a symbol
-            out = Categorical(logits=out).sample()
             
-        attentions = torch.cat(attentions, dim = 1) # B * T(=decode timesteps) * S(=encoder)
+            # draws a symbol
+            dis = Categorical(logits=out)
+            out = dis.sample()
+            output_chars.append(out)
+            if return_probs:
+                log_probs.append(dis.log_prob(out))
+            
+        info = {}
+        info["decodes"] = torch.stack(output_chars, dim=-1)
+        if return_probs:
+            info["log_probs"] = torch.stack(log_probs, dim=-1)
+        if need_weights: 
+            info["attentions"] = torch.cat(attentions, dim = 1) # B * T(=decode timesteps) * S(=encoder)
+
         output_logits = torch.cat(output_logits, dim=1)
-        return output_logits, attentions
+        return output_logits, info
         
 class ASRModel(torch.nn.Module):
     def __init__(self, input_size, embed_size= 64, 
@@ -405,7 +423,37 @@ class ASRModel_Attention(torch.nn.Module):
         
         # Encode speech features
         encoder_outputs, encoder_lens = self.listener(x,lx)
-
+        # calculate keys and values once!
+        self.attend.compute_kv(encoder_outputs)
         # Decode text with the speller using context from the attention
-        outputs, attentions = self.speller(encoder_outputs, y, teacher_forcing_ratio = teacher_forcing_ratio)
-        return outputs, attentions
+        outputs, data = self.speller(encoder_outputs, y, 
+                                           teacher_forcing_ratio = teacher_forcing_ratio,
+                                           need_weights = True,
+                                           return_probs = False)
+        return outputs, data["attentions"]
+    
+    def generate_decodes(self, n_decodes, x, lx, y=None, teacher_forcing_ratio=1):
+        with torch.no_grad():
+            # Encode speech features
+            encoder_outputs, encoder_lens = self.listener(x,lx)
+            # calculate keys and values once!
+            self.attend.compute_kv(encoder_outputs)
+            # Decode text with the speller using context from the attention
+            outputs = []
+            probs = []
+            for i in range(n_decodes): #running decoder only. this takes time..
+                output, info = self.speller(encoder_outputs, y, 
+                                      teacher_forcing_ratio = teacher_forcing_ratio,
+                                      need_weights = False,
+                                      return_probs = True
+                                      )
+                outputs.append(info["decodes"])
+                probs.append(info["log_probs"].sum(-1)) #total decode probability
+            
+            outputs = torch.stack(outputs, -1) #B, T, n_decodes
+            probs = torch.stack(probs, -1) #B, n_decodes
+            best_probs, indices = probs.max(-1, keepdim=True)
+            #if selecting decodes #1, #3 for each batch, index should be [[[1],[1]...[1]], [[3],[3], ...[3]]]
+            indices = indices.unsqueeze(1).expand(-1, outputs.shape[-2],-1)
+            outputs = torch.gather(outputs, -1, indices).squeeze(-1)
+        return outputs, best_probs.squeeze(-1)
