@@ -45,7 +45,8 @@ class Trainer2():
                 reduction='mean',
             )
         self.optimizer =  torch.optim.AdamW(model.parameters(), config["lr"]) # What goes in here?
-        self.lr_schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', threshold=0.001, factor = 0.2, patience = 2)
+        self.lr_schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', threshold=0.001, factor = 0.2, patience = 3, cooldown=3)
+        self.tf_schedule = 1.0 # modify this value -> do not go below 0.5
         
     def train(self):
         best_loss = 10e6
@@ -60,7 +61,7 @@ class Trainer2():
                 x, y, lx, ly = data
                 x, y = x.to(self.device), y.to(self.device)
 
-                h, attn = self.model(x, lx, y)
+                h, attn = self.model(x, lx, y,teacher_forcing_ratio= self.tf_schedule)
                 loss = self.criterion(h.transpose(-1, -2), y)
 
                 epoch_loss += loss.item()
@@ -90,8 +91,8 @@ class Trainer2():
             print("\tTrain Loss {:.04f}\t Learning Rate {:.07f}".format(train_loss, float(self.optimizer.param_groups[0]['lr'])))
             
             # validate
-            valid_loss, valid_dist = self.validate(epoch)
-            self.lr_schedule.step(valid_dist) #step lr decay
+            valid_loss, valid_dist, examples = self.validate(epoch)
+            self.lr_schedule.step(valid_loss) #step lr decay
             
             ## checkpointing
             if valid_loss < best_loss:
@@ -105,11 +106,14 @@ class Trainer2():
             ## add epoch logs here
             print("\tVal Dist {:.04f}%\t Val Loss {:.04f}".format(valid_dist, valid_loss))
             if USE_WANDB:
+                examples = wandb.Table(examples["keys"], examples["values"])
                 wandb.log({
                     'train_loss': train_loss,
                     'valid_dist': valid_dist,
                     'valid_loss': valid_loss,
-                    'lr'        : float(self.optimizer.param_groups[0]['lr'])
+                    'lr'        : float(self.optimizer.param_groups[0]['lr']),
+                    'tf_rate': self.tf_schedule,
+                    'examples': examples
                 })
             ## ^ add epoch logs here ^
         if USE_WANDB:
@@ -128,7 +132,7 @@ class Trainer2():
             x, y = x.to(self.device), y.to(self.device)
 
             with torch.inference_mode():
-                h, attn = self.model(x, lx, y)
+                h, attn = self.model(x, lx, y, teacher_forcing_ratio= self.tf_schedule)
                 loss = self.criterion(h.transpose(-1, -2), y)
 
             # two stats to compute (with tqdm bar)
@@ -140,10 +144,15 @@ class Trainer2():
             if i == 0: # print first three samples
                 pred_strings = self.decoder.decode_prediction(h[:3,:,:])
                 label_strings = [indices_to_chars(line, VOCAB) for line in y[:3,:].cpu().numpy()]
-                plt.imshow(attn[0,:,:].cpu().detach().numpy())            
-                plt.title('[epoch]%s\n%s\nGT:%s' % (epoch, pred_strings[0], label_strings[0]), fontdict = {'fontsize' : 12})
+                plt.imshow(attn[0,:,:].cpu().detach().numpy())          
+                plt.title('[epoch]%s\n%s\nGT:%s' % (epoch, pred_strings[0][:len(label_strings[0])], label_strings[0]), fontdict = {'fontsize' : 12})
                 plt.axis('off')
                 plt.savefig('plots/' + self.run_id + '_epoch%d.png' % epoch)
+                
+                example = {
+                    "keys" : ["pred_string", "label_string", "attn"],
+                    "values": [[pred_strings[i], label_strings[i], wandb.Image(wandb.Image.to_uint8(attn[i,:,:].cpu().detach().numpy()))] for i in range(3)]
+                }
                 
             batch_bar.set_postfix(
                 loss="{:.04f}".format(total_loss/ (i + 1)), 
@@ -157,7 +166,7 @@ class Trainer2():
         batch_bar.close() #don't forget this!
         total_loss = total_loss/len(self.val_loader)
         val_dist = vdist/len(self.val_loader)
-        return total_loss, val_dist
+        return total_loss, val_dist, example
     
     def save_model(self, epoch, valid_loss, path):
         torch.save(

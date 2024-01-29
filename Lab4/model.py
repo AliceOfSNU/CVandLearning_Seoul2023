@@ -35,7 +35,7 @@ class pBLSTM(torch.nn.Module):
 
     def __init__(self, input_size, hidden_size):
         super(pBLSTM, self).__init__()
-        # TODO: single layer bidirectional LSTM
+        # single layer bidirectional LSTM
         self.blstm = nn.LSTM(
             # double input_size because trunc_reshape doubles feature dim
             2*input_size, hidden_size, num_layers = 1, bidirectional=True,
@@ -109,7 +109,7 @@ class ResidualBlock(nn.Module):
         # init method
         for m in self.modules():
             if isinstance(m, nn.Conv1d):
-                nn.init.xavier_uniform_(m.weight.data)
+                nn.init.uniform_(m.weight.data, -0.1, 0.1)
     
     def forward(self, x):
         out = self.conv1(x)
@@ -163,6 +163,13 @@ class Encoder(torch.nn.Module):
             # double because pblstm is bidirectional. 
             pBLSTM(2*encoder_hidden_size, encoder_hidden_size)
         )
+        
+        # init LSTM layers
+        for name, p in self.named_parameters():
+            if "lstm.weight" in name:
+                nn.init.uniform_(p.data, -0.1, 0.1)
+                print(f"init {name} with uniform")
+                
 
     def forward(self, x, x_lens):
         #channel first layout. time dim goes last
@@ -186,14 +193,18 @@ class Encoder(torch.nn.Module):
         return x, x_lens
     
 class DotProductAttention(torch.nn.Module):
-    def __init__(self, dim_q, dim_kv, hidden_dim, dropout=0.1):
+    def __init__(self, dim_q, dim_kv, hidden_dim_kq, hidden_dim_v, dropout=0.1):
         super(DotProductAttention, self).__init__()
-        self.hidden_dim = hidden_dim
-        self.query_proj = nn.Linear(dim_q, hidden_dim)
-        self.key_proj = nn.Linear(dim_kv, hidden_dim)
-        self.value_proj = nn.Linear(dim_kv, hidden_dim)
+        self.hidden_dim_kq = hidden_dim_kq
+        self.query_proj = nn.Linear(dim_q, hidden_dim_kq)
+        self.key_proj = nn.Linear(dim_kv, hidden_dim_kq)
+        self.value_proj = nn.Linear(dim_kv, hidden_dim_v)
         self.dropout = nn.Dropout(dropout)
         
+        ## init weights
+        for m in [self.query_proj, self.key_proj, self.value_proj]:
+            nn.init.uniform_(m.weight.data, -0.1, 0.1)
+            
         self.cache = {}
         
     # precompute k and v, to reuse them for multiple queries.
@@ -208,7 +219,7 @@ class DotProductAttention(torch.nn.Module):
             print("[err] compute_kv must be called before calling compute_context")
         
         dot_product = torch.matmul(q, self.cache["k"].transpose(-2, -1))
-        attn = (dot_product / math.sqrt(self.hidden_dim)).softmax(-1)
+        attn = (dot_product / math.sqrt(self.hidden_dim_kq)).softmax(-1)
         attn = self.dropout(attn)
         context_vec = torch.matmul(attn, self.cache["v"])
         
@@ -229,9 +240,8 @@ class MLPDecoder(torch.nn.Module):
         self.softmax = nn.LogSoftmax(dim=2)
         
         # init method
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight.data)
+        for m in [self.fc1, self.fc2]:
+            nn.init.uniform_(m.weight.data, -0.1, 0.1)
 
     def forward(self, encoder_out):
         # call your MLP
@@ -249,13 +259,15 @@ class MLPDecoder(torch.nn.Module):
         return out
     
 class AttentionDecoder(torch.nn.Module):
-    def __init__(self, attender:DotProductAttention, hidden_dim, output_dim, dropout = 0.1):
+    def __init__(self, attender:DotProductAttention, encoder_dim, hidden_dim, output_dim, dropout = 0.1):
         super(AttentionDecoder, self).__init__()
         self.hidden_dim = hidden_dim
+        self.encoder_dim = encoder_dim # 'context' from encoder(value dim)
         self.attend = attender # Attention object in speller
-        self.max_timesteps = 820 # Max timesteps
+        self.max_timesteps = 820 # Max timesteps, used to limit decode length when y not 
 
         self.embedding =  nn.Embedding(output_dim, hidden_dim)
+        #self.embedding_dropout = nn.Dropout(p = 0.2)
         self.lstm_cell1 = nn.LSTMCell(hidden_dim, hidden_dim)
         # you may want to insert a dropout here!
         self.lstm_cell2 = nn.LSTMCell(hidden_dim, hidden_dim)
@@ -267,15 +279,28 @@ class AttentionDecoder(torch.nn.Module):
         # weight tying:
         # "Using the Output Embedding to Improve Language Models" (Press & Wolf 2016)
         # https://arxiv.org/abs/1608.05859
-        self.classifier.weight = self.embedding.weight
         
         self.CDN = nn.Sequential(
-            nn.Linear(2*hidden_dim, hidden_dim),
+            nn.Linear(encoder_dim+hidden_dim, hidden_dim),
             nn.Dropout(dropout),
             nn.ReLU(),
             self.classifier
         )
+        
+        for m in self.CDN.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.uniform_(m.weight.data, -0.1, 0.1)
+                
+        for name, p in self.named_parameters():
+            if "lstm_cell" in name and "weight" in name:
+                nn.init.uniform_(p.data, -0.1, 0.1)
+                print(f"init {name} with uniform")
+                
+        #weight tying
+        self.classifier.weight = self.embedding.weight
+        
         self.output_dim = output_dim
+        
         
     def forward(self, encoder_outputs, y=None, teacher_forcing_ratio = 1.0):
         # calculate keys and values once!
@@ -315,7 +340,7 @@ class AttentionDecoder(torch.nn.Module):
             # draws a symbol
             out = Categorical(logits=out).sample()
             
-        attentions = torch.cat(attentions, dim = 1) # B * T(=decode timesteps) * S(=kv length from encoder)
+        attentions = torch.cat(attentions, dim = 1) # B * T(=decode timesteps) * S(=encoder)
         output_logits = torch.cat(output_logits, dim=1)
         return output_logits, attentions
         
@@ -351,7 +376,9 @@ class ASRModel(torch.nn.Module):
         return decoder_out, encoder_lens
     
 class ASRModel_Attention(torch.nn.Module):
-    def __init__(self, input_size, embed_size, 
+    def __init__(self, input_size, 
+                 encoder_hidden_size, #64(plstm+bilstm)
+                 decoder_hidden_size, #128 or 64
                  intermediate_sizes = [64],
                  output_size= len(defines.PHONEMES)): # add parameters
         super().__init__()
@@ -360,13 +387,17 @@ class ASRModel_Attention(torch.nn.Module):
         # Pass the right parameters here
         self.listener = Encoder(input_size, 
                                 embedding_hidden_sizes=intermediate_sizes, 
-                                encoder_hidden_size=embed_size, 
+                                encoder_hidden_size=encoder_hidden_size, 
                                 conv_kernel=3, conv_stride=1, dropout=0.1
                             )
         self.attend = DotProductAttention(
-            dim_q=embed_size, dim_kv=2*embed_size, hidden_dim=embed_size, dropout=0.1
+            dim_q=decoder_hidden_size,         dim_kv=encoder_hidden_size*2, #bilstm
+            hidden_dim_kq=decoder_hidden_size, hidden_dim_v=decoder_hidden_size,
+            dropout=0.1
         )
-        self.speller = AttentionDecoder(self.attend, embed_size, output_size)
+        self.speller = AttentionDecoder(self.attend, 
+                                        encoder_hidden_size*2, #bilstm
+                                        decoder_hidden_size, output_size)
         self.output_size = output_size    
     
     def forward(self, x,lx,y=None, teacher_forcing_ratio=1):
