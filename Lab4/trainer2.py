@@ -7,7 +7,7 @@ import wandb
 import matplotlib.pyplot as plt
 import Levenshtein
 
-USE_WANDB = False
+USE_WANDB = True
 BASE_DIR= "CVandLearning_Seoul2023/Lab4"
 
 class Trainer2():
@@ -47,9 +47,8 @@ class Trainer2():
                 reduction='mean',
             )
         self.optimizer =  torch.optim.AdamW(model.parameters(), config["lr"]) # What goes in here?
-        self.lr_schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', threshold=0.0001, factor = 0.2, patience = 3, cooldown=3)
-        #self.tf_schedule = CustomSchedular(1.0, 20, 0.1, 15, 0.6) #1.0->0.9 ->..0.6 every 15 epochs starting from 20
-        self.tf_schedule = CustomSchedular(1.0, 2, 0.2, 7, 0.6) #1.0->0.9 ->..0.6 every 15 epochs starting from 20
+        self.lr_schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', threshold=0.0001, factor = 0.2, patience = 3, cooldown=5)
+        self.tf_schedule = CustomSchedular(1.0, 20, 0.1, 15, 0.6) #1.0->0.9 ->..0.6 every 15 epochs starting from 20
         
     def train(self):
         best_loss = 10e6
@@ -63,8 +62,7 @@ class Trainer2():
 
                 x, y, lx, ly = data
                 x, y = x.to(self.device), y.to(self.device)
-
-                h, attn = self.model(x, lx, y,teacher_forcing_ratio= self.tf_schedule.value)
+                h, attn = self.model(x, lx, y,teacher_forcing_ratio= self.tf_schedule.value) #
                 loss = self.criterion(h.transpose(-1, -2), y)
 
                 epoch_loss += loss.item()
@@ -87,7 +85,7 @@ class Trainer2():
                 torch.cuda.empty_cache()
                 
                 ### TESTING ONLY.
-                if i == 3: break
+                #if i == 3: break
 
             batch_bar.close() 
             train_loss = epoch_loss / len(self.train_loader)
@@ -95,7 +93,8 @@ class Trainer2():
             
             # validate
             valid_loss, valid_dist, examples = self.validate(epoch)
-            self.lr_schedule.step(valid_loss) #step lr decay
+            if epoch >= 80:
+                self.lr_schedule.step(valid_loss) #step lr decay
             
             # schedule tf ratio
             self.tf_schedule.step(epoch)
@@ -146,18 +145,19 @@ class Trainer2():
             total_loss += loss.item()
             # other is lv_distance
 
+            label_strings = [indices_to_chars(line, phoneme_map) for line in y.cpu().numpy()]
+
             # greedy decodes
-            #pred_strings = self.decoder.decode_prediction(h[:3,:,:]) greedy decodes
-            #vdist += calculate_levenshtein(h, y, lx, ly, self.decoder, phoneme_map)
+            pred_strings = self.decoder.decode_prediction(h[:3,:,:]) #greedy decodes
+            vdist += calculate_levenshtein(h, y, lx, ly, self.decoder, phoneme_map)
             
             # sampling decoders
-            decodes, log_probs = self.model.generate_decodes(10, x, lx, y)
-            pred_strings = [indices_to_chars(line, phoneme_map) for line in decodes.cpu().numpy()]
-            label_strings = [indices_to_chars(line, phoneme_map) for line in y.cpu().numpy()]
-            dist = 0 #batch
-            for pred_string, label_string in zip(pred_strings, label_strings):
-                dist += Levenshtein.distance(pred_string, label_string)
-            vdist += dist/x.shape[0] 
+            #decodes, log_probs = self.model.generate_decodes(10, x, lx, y)
+            #pred_strings = [indices_to_chars(line, phoneme_map) for line in decodes.cpu().numpy()]
+            #dist = 0 #batch
+            #for pred_string, label_string in zip(pred_strings, label_strings):
+            #    dist += Levenshtein.distance(pred_string, label_string)
+            #vdist += dist/x.shape[0] 
             
             if i == 0: # print first three samples
                 plt.imshow(attn[0,:,:].cpu().detach().numpy())          
@@ -167,10 +167,10 @@ class Trainer2():
                 
                 example = {
                     "keys" : ["pred_string","log_prob" ,"label_string", "attn"],
-                    "values": [[pred_strings[i], log_probs[i].item(), label_strings[i], wandb.Image(wandb.Image.to_uint8(attn[i,:,:].cpu().detach().numpy()))] for i in range(3)]
+                    "values": [[pred_strings[i], "_(greedy)", label_strings[i], wandb.Image(wandb.Image.to_uint8(attn[i,:,:].cpu().detach().numpy()))] for i in range(3)]
                 }
                 #test only
-                break     
+                #break     
             
             batch_bar.set_postfix(
                 loss="{:.04f}".format(total_loss/ (i + 1)), 

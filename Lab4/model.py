@@ -75,7 +75,7 @@ class pBLSTM(torch.nn.Module):
     
 
 class LockedDropout(nn.Module):
-    def __init__(self, dropout=0.2):
+    def __init__(self, dropout=0.3):
         self.dropout = dropout
         super().__init__()
 
@@ -83,19 +83,46 @@ class LockedDropout(nn.Module):
         if not self.training:
             return x
         
-        # TODO: unpack
+        # unpack
         x, lens = pad_packed_sequence(x, batch_first=False)
         
-        # TODO: apply same dropout over all timesteps.
+        # apply same dropout over all timesteps.
         # choose random dropout mask for each batch.
         m = x.data.new(1, *x.shape[1:]).bernoulli_(1 - self.dropout)
         m.requires_grad = False
         mask = m / (1 - self.dropout)
         mask = mask.expand_as(x)
         
-        # TODO: pack again and return
+        # pack again and return
         return pack_padded_sequence(mask * x, lens, batch_first=False, enforce_sorted=False)
 
+class LockedDropoutCell(nn.Module):
+    # this is a timestep-by-timestep version of the LockedDropout
+    # i.e.. not using packed sequences, processes each timestep for each forward,
+    # preserving the mask for entire length.
+    
+    def __init__(self, dropout = 0.3):
+        super().__init__()
+        self.dropout = 0.3
+        self.mask = None
+
+    def forward(self, x):
+        if not self.training:
+            return x
+        if self.mask is None:
+            print("[warning!] set_mask was not called before forward call")
+            self.set_mask()
+        return self.mask * x
+    
+    def set_mask(self, sz, device):
+        # this samples a mask, which is applied for all forward calls
+        # until set_mask is called again and a new mask is sampled.
+        m = torch.empty(*sz, device=device).bernoulli_(1 - self.dropout)
+        m.requires_grad = False
+        self.mask = m / (1 - self.dropout)
+        
+
+        
 class ResidualBlock(nn.Module):
     def __init__ (self, num_channels, kernel_size=3):
         super(ResidualBlock, self).__init__()
@@ -193,7 +220,7 @@ class Encoder(torch.nn.Module):
         return x, x_lens
     
 class DotProductAttention(torch.nn.Module):
-    def __init__(self, dim_q, dim_kv, hidden_dim_kq, hidden_dim_v, dropout=0.1):
+    def __init__(self, dim_q, dim_kv, hidden_dim_kq, hidden_dim_v, dropout=0.3):
         super(DotProductAttention, self).__init__()
         self.hidden_dim_kq = hidden_dim_kq
         self.query_proj = nn.Linear(dim_q, hidden_dim_kq)
@@ -257,28 +284,40 @@ class MLPDecoder(torch.nn.Module):
         # for each 'reduced-timestep'.
         out = self.softmax(out)
         return out
+
+class EmbeddingLayer(torch.nn.Module):
+    def __init__(self, vocab_size, embedding_dim, padding_idx = None):
+        super(EmbeddingLayer, self).__init__()
+        self.weight = torch.nn.Parameter(torch.empty(vocab_size, embedding_dim), requires_grad=True)
+        nn.init.normal_(self.weight)
+        self.padding_idx = padding_idx
+        if padding_idx is not None:
+            with torch.no_grad(): #why? inplace operation!
+                self.weight[padding_idx].fill_(0) #set row to 0
+        
+    def forward(self, x):
+        # x must be a one-hot vector
+        return torch.matmul(x, self.weight)
     
 class AttentionDecoder(torch.nn.Module):
-    def __init__(self, attender:DotProductAttention, encoder_dim, hidden_dim, output_dim, dropout = 0.1):
+    def __init__(self, attender:DotProductAttention, encoder_dim, hidden_dim, output_dim, dropout = 0.3):
         super(AttentionDecoder, self).__init__()
         self.hidden_dim = hidden_dim
         self.encoder_dim = encoder_dim # 'context' from encoder(value dim)
+        self.output_dim = output_dim
         self.attend = attender # Attention object in speller
         self.max_timesteps = 820 # Max timesteps, used to limit decode length when y not 
 
-        self.embedding =  nn.Embedding(output_dim, hidden_dim)
+        self.embedding =  EmbeddingLayer(output_dim, hidden_dim, padding_idx=defines.PAD_TOKEN)
         #self.embedding_dropout = nn.Dropout(p = 0.2)
         self.lstm_cell1 = nn.LSTMCell(hidden_dim, hidden_dim)
-        # you may want to insert a dropout here!
+        self.locked_dropout = LockedDropoutCell(dropout)
         self.lstm_cell2 = nn.LSTMCell(hidden_dim, hidden_dim)
 
         # For CDN (Feel free to change)
         self.softmax = nn.LogSoftmax(dim=-1)
         
         self.classifier = nn.Linear(hidden_dim, output_dim)
-        # weight tying:
-        # "Using the Output Embedding to Improve Language Models" (Press & Wolf 2016)
-        # https://arxiv.org/abs/1608.05859
         
         self.CDN = nn.Sequential(
             nn.Linear(encoder_dim+hidden_dim, hidden_dim),
@@ -296,16 +335,31 @@ class AttentionDecoder(torch.nn.Module):
                 nn.init.uniform_(p.data, -0.1, 0.1)
                 print(f"init {name} with uniform")
                 
-        #weight tying
+        # weight tying:
+        # "Using the Output Embedding to Improve Language Models" (Press & Wolf 2016)
+        # https://arxiv.org/abs/1608.05859
         self.classifier.weight = self.embedding.weight
         
         self.output_dim = output_dim
         
+    def draw_greedy(self, x):
+        # argmax sampling with gradient trick
+        raise NotImplementedError
+    
+    def draw_random(self, logits, tau=1.0):
+        # gumbel sampling with gradient trick
+        # logits: B, T, V, 
+        gumbels =  -torch.empty_like(logits).exponential_().log()# ~Gumbel(0,1)
+        gumbels = (logits + gumbels) / tau
+        y_soft = gumbels.softmax(dim = -1)
+        _, indices = y_soft.max(-1, keepdim=True)
+        y_hard = torch.zeros_like(logits).scatter_(-1, indices, 1.0)
         
+        return y_hard - y_soft.detach() + y_soft, indices
+    
     def forward(self, encoder_outputs, y=None, 
                 teacher_forcing_ratio = 1.0, 
-                need_weights=False,
-                return_probs=False):
+                need_weights=False):
         B = encoder_outputs.shape[0] 
         
         if y is None: #inference mode
@@ -313,29 +367,32 @@ class AttentionDecoder(torch.nn.Module):
             teacher_forcing_ratio = 0
         else:
             T = y.shape[1]
-            yD = self.embedding(y) #B, T, D
             
         out = torch.full((B, ), defines.SOS_TOKEN, dtype=torch.long)#intially <sos>
         out = out.to(encoder_outputs.device)
+        out = F.one_hot(out, self.output_dim) * 1.0 #float tensor
+        
         output_logits = []
         attentions = [] #cumulate attentions for later debugging
-        log_probs = [] #sum of categorical log probs of drawn tokens at each timestep.
         output_chars = [] #drawn character(index) at each step, as Long Tensors
         
         #hc1 = (torch.zeros((B, self.hidden_dim)), torch.zeros((B, self.hidden_dim)))
         #hc2 = (torch.zeros((B, self.hidden_dim)), torch.zeros((B, self.hidden_dim)))
+        self.locked_dropout.set_mask((B, self.hidden_dim), encoder_outputs.device) #sample a mask
         for t in range(T):
             p = np.random.rand() #roll the dice
             if p < teacher_forcing_ratio and t > 0: 
-                x = yD[:, t-1, :] #y starts without <sos>, so t-1 is correct
+                y_onehot = F.one_hot(y[:, t-1], self.output_dim) * 1.0 #float tensor
+                x = self.embedding(y_onehot) #y starts without <sos>, so t-1 is correct
             else:
                 x = self.embedding(out)
             if t == 0: #not providing the hidden/cell states will set them to zero
                 hc1 = self.lstm_cell1(x)
-                hc2 = self.lstm_cell2(hc1[0])
+                hc2 = self.lstm_cell2(self.locked_dropout(hc1[0]))
             else:
                 hc1 = self.lstm_cell1(x, hc1)
-                hc2 = self.lstm_cell2(hc1[0], hc2)
+                # following the way dropout is applied in torch LSTM layer..
+                hc2 = self.lstm_cell2(self.locked_dropout(hc1[0]), hc2)
             if need_weights:
                 ctx, attn = self.attend.compute_context(hc2[0].unsqueeze(1), need_weights=True)
                 attentions.append(attn)
@@ -345,17 +402,18 @@ class AttentionDecoder(torch.nn.Module):
             out = self.CDN(torch.cat([hc2[0], ctx.squeeze(1)], dim = -1))
             output_logits.append(out.unsqueeze(1))
             
-            # draws a symbol
-            dis = Categorical(logits=out)
-            out = dis.sample()
-            output_chars.append(out)
-            if return_probs:
-                log_probs.append(dis.log_prob(out))
+            # draws a symbol - this will not work
+            #dis = Categorical(logits=out)
+            #out = dis.sample()
+            #output_chars.append(out)
+            
+            # gumbel softmax trick!
+            out, indices = self.draw_random(out)
+            output_chars.append(indices)
+            
             
         info = {}
-        info["decodes"] = torch.stack(output_chars, dim=-1)
-        if return_probs:
-            info["log_probs"] = torch.stack(log_probs, dim=-1)
+        info["decodes"] = torch.cat(output_chars, dim=-1)
         if need_weights: 
             info["attentions"] = torch.cat(attentions, dim = 1) # B * T(=decode timesteps) * S(=encoder)
 
@@ -401,26 +459,33 @@ class ASRModel_Attention(torch.nn.Module):
                  output_size= len(defines.PHONEMES)): # add parameters
         super().__init__()
         # augmentation
-        
+        self.augmentations  = torch.nn.Sequential(
+            #Add Time Masking/ Frequency Masking
+            FrequencyMasking(freq_mask_param=6),
+            TimeMasking(time_mask_param=80),
+        )
         # Pass the right parameters here
         self.listener = Encoder(input_size, 
                                 embedding_hidden_sizes=intermediate_sizes, 
                                 encoder_hidden_size=encoder_hidden_size, 
-                                conv_kernel=3, conv_stride=1, dropout=0.1
+                                conv_kernel=3, conv_stride=1, dropout=0.2
                             )
         self.attend = DotProductAttention(
             dim_q=decoder_hidden_size,         dim_kv=encoder_hidden_size*2, #bilstm
             hidden_dim_kq=decoder_hidden_size, hidden_dim_v=decoder_hidden_size,
-            dropout=0.1
+            dropout=0.3
         )
         self.speller = AttentionDecoder(self.attend, 
                                         encoder_hidden_size*2, #bilstm
-                                        decoder_hidden_size, output_size)
+                                        decoder_hidden_size, output_size,
+                                        dropout=0.3)
         self.output_size = output_size    
     
     def forward(self, x,lx,y=None, teacher_forcing_ratio=1):
         # augmentations
-        
+        if self.training:
+            x = self.augmentations(x.transpose(-1, -2)).transpose(-1, -2)
+            
         # Encode speech features
         encoder_outputs, encoder_lens = self.listener(x,lx)
         # calculate keys and values once!
@@ -428,8 +493,7 @@ class ASRModel_Attention(torch.nn.Module):
         # Decode text with the speller using context from the attention
         outputs, data = self.speller(encoder_outputs, y, 
                                            teacher_forcing_ratio = teacher_forcing_ratio,
-                                           need_weights = True,
-                                           return_probs = False)
+                                           need_weights = True)
         return outputs, data["attentions"]
     
     def generate_decodes(self, n_decodes, x, lx, y=None, teacher_forcing_ratio=1):
@@ -440,20 +504,12 @@ class ASRModel_Attention(torch.nn.Module):
             self.attend.compute_kv(encoder_outputs)
             # Decode text with the speller using context from the attention
             outputs = []
-            probs = []
             for i in range(n_decodes): #running decoder only. this takes time..
                 output, info = self.speller(encoder_outputs, y, 
                                       teacher_forcing_ratio = teacher_forcing_ratio,
-                                      need_weights = False,
-                                      return_probs = True
+                                      need_weights = False
                                       )
                 outputs.append(info["decodes"])
-                probs.append(info["log_probs"].sum(-1)) #total decode probability
             
-            outputs = torch.stack(outputs, -1) #B, T, n_decodes
-            probs = torch.stack(probs, -1) #B, n_decodes
-            best_probs, indices = probs.max(-1, keepdim=True)
-            #if selecting decodes #1, #3 for each batch, index should be [[[1],[1]...[1]], [[3],[3], ...[3]]]
-            indices = indices.unsqueeze(1).expand(-1, outputs.shape[-2],-1)
-            outputs = torch.gather(outputs, -1, indices).squeeze(-1)
-        return outputs, best_probs.squeeze(-1)
+            outputs = torch.stack(outputs, 1) #B, n_decodes, T
+        return outputs

@@ -132,9 +132,17 @@ class MEAudioDataset(Dataset):
             transcript_dir = os.path.join(base_dir, "train-clean-360", "transcripts")
             
             # add the list of mfcc and transcript paths from train-clean-360 to the list of paths  from train-clean-100
-            mfcc_files.extend([os.path.join(mfcc_dir, fname) for fname in os.listdir(mfcc_dir)])
-            transcript_files.extend([os.path.join(transcript_dir, fname) for fname in os.listdir(transcript_dir)])
-
+            files = os.listdir(mfcc_dir)
+            files = os.listdir(transcript_dir)
+            mfcc_files_360 = [os.path.join(mfcc_dir, fname) for fname in files[:]]
+            transcript_files_360 = [os.path.join(transcript_dir, fname) for fname in files[:]]
+            for idx in range(len(mfcc_files_360)):
+                with open(self.mfcc_files360[idx], "rb") as f:
+                    mfcc = np.load(f)
+                    if mfcc.shape[0] > 2448: continue
+                    mfcc_files.append(mfcc_files_360[idx])
+                    transcript_files.append(transcript_files_360[idx])
+                    
         assert len(mfcc_files) == len(transcript_files)
         self.length  = len(transcript_files)
         
