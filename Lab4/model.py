@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
-from torch.distributions.categorical import Categorical
 from torchaudio.transforms import FrequencyMasking, TimeMasking
 import random
 import numpy as np
@@ -75,7 +74,7 @@ class pBLSTM(torch.nn.Module):
     
 
 class LockedDropout(nn.Module):
-    def __init__(self, dropout=0.3):
+    def __init__(self, dropout=0.2):
         self.dropout = dropout
         super().__init__()
 
@@ -101,9 +100,9 @@ class LockedDropoutCell(nn.Module):
     # i.e.. not using packed sequences, processes each timestep for each forward,
     # preserving the mask for entire length.
     
-    def __init__(self, dropout = 0.3):
+    def __init__(self, dropout = 0.2):
         super().__init__()
-        self.dropout = 0.3
+        self.dropout = 0.2
         self.mask = None
 
     def forward(self, x):
@@ -220,7 +219,7 @@ class Encoder(torch.nn.Module):
         return x, x_lens
     
 class DotProductAttention(torch.nn.Module):
-    def __init__(self, dim_q, dim_kv, hidden_dim_kq, hidden_dim_v, dropout=0.3):
+    def __init__(self, dim_q, dim_kv, hidden_dim_kq, hidden_dim_v, dropout=0.2):
         super(DotProductAttention, self).__init__()
         self.hidden_dim_kq = hidden_dim_kq
         self.query_proj = nn.Linear(dim_q, hidden_dim_kq)
@@ -300,7 +299,7 @@ class EmbeddingLayer(torch.nn.Module):
         return torch.matmul(x, self.weight)
     
 class AttentionDecoder(torch.nn.Module):
-    def __init__(self, attender:DotProductAttention, encoder_dim, hidden_dim, output_dim, dropout = 0.3):
+    def __init__(self, attender:DotProductAttention, encoder_dim, hidden_dim, output_dim, dropout = 0.2):
         super(AttentionDecoder, self).__init__()
         self.hidden_dim = hidden_dim
         self.encoder_dim = encoder_dim # 'context' from encoder(value dim)
@@ -310,7 +309,7 @@ class AttentionDecoder(torch.nn.Module):
 
         self.embedding =  EmbeddingLayer(output_dim, hidden_dim, padding_idx=defines.PAD_TOKEN)
         #self.embedding_dropout = nn.Dropout(p = 0.2)
-        self.lstm_cell1 = nn.LSTMCell(hidden_dim, hidden_dim)
+        self.lstm_cell1 = nn.LSTMCell(hidden_dim*2, hidden_dim)
         self.locked_dropout = LockedDropoutCell(dropout)
         self.lstm_cell2 = nn.LSTMCell(hidden_dim, hidden_dim)
 
@@ -372,6 +371,9 @@ class AttentionDecoder(torch.nn.Module):
         out = out.to(encoder_outputs.device)
         out = F.one_hot(out, self.output_dim) * 1.0 #float tensor
         
+        # initial ctx: B * hidden-dim.
+        ctx = encoder_outputs.new_zeros((B, self.hidden_dim))
+        
         output_logits = []
         attentions = [] #cumulate attentions for later debugging
         output_chars = [] #drawn character(index) at each step, as Long Tensors
@@ -387,10 +389,10 @@ class AttentionDecoder(torch.nn.Module):
             else:
                 x = self.embedding(out)
             if t == 0: #not providing the hidden/cell states will set them to zero
-                hc1 = self.lstm_cell1(x)
+                hc1 = self.lstm_cell1(torch.cat([x, ctx], dim=-1))
                 hc2 = self.lstm_cell2(self.locked_dropout(hc1[0]))
             else:
-                hc1 = self.lstm_cell1(x, hc1)
+                hc1 = self.lstm_cell1(torch.cat([x, ctx], dim=-1), hc1)
                 # following the way dropout is applied in torch LSTM layer..
                 hc2 = self.lstm_cell2(self.locked_dropout(hc1[0]), hc2)
             if need_weights:
@@ -398,8 +400,9 @@ class AttentionDecoder(torch.nn.Module):
                 attentions.append(attn)
             else: 
                 ctx = self.attend.compute_context(hc2[0].unsqueeze(1), need_weights=False)
-                
-            out = self.CDN(torch.cat([hc2[0], ctx.squeeze(1)], dim = -1))
+            
+            ctx = ctx.squeeze(1) #remove time dimenstion
+            out = self.CDN(torch.cat([hc2[0], ctx], dim = -1))
             output_logits.append(out.unsqueeze(1))
             
             # draws a symbol - this will not work
@@ -431,7 +434,7 @@ class ASRModel(torch.nn.Module):
         self.augmentations  = torch.nn.Sequential(
             #Add Time Masking/ Frequency Masking
             FrequencyMasking(freq_mask_param=6),
-            TimeMasking(time_mask_param=80),
+            TimeMasking(time_mask_param=50),
         )
         self.encoder        = Encoder(input_size, 
                                       embedding_hidden_sizes=intermediate_sizes, 
@@ -463,7 +466,7 @@ class ASRModel_Attention(torch.nn.Module):
             #Add Time Masking/ Frequency Masking
             FrequencyMasking(freq_mask_param=6),
             TimeMasking(time_mask_param=80),
-        )
+        )        
         # Pass the right parameters here
         self.listener = Encoder(input_size, 
                                 embedding_hidden_sizes=intermediate_sizes, 
@@ -473,18 +476,18 @@ class ASRModel_Attention(torch.nn.Module):
         self.attend = DotProductAttention(
             dim_q=decoder_hidden_size,         dim_kv=encoder_hidden_size*2, #bilstm
             hidden_dim_kq=decoder_hidden_size, hidden_dim_v=decoder_hidden_size,
-            dropout=0.3
+            dropout=0.2
         )
         self.speller = AttentionDecoder(self.attend, 
                                         encoder_hidden_size*2, #bilstm
                                         decoder_hidden_size, output_size,
-                                        dropout=0.3)
+                                        dropout=0.2)
         self.output_size = output_size    
     
     def forward(self, x,lx,y=None, teacher_forcing_ratio=1):
         # augmentations
-        if self.training:
-            x = self.augmentations(x.transpose(-1, -2)).transpose(-1, -2)
+        #if self.training:
+        #    x = self.augmentations(x.transpose(-1, -2)).transpose(-1, -2)
             
         # Encode speech features
         encoder_outputs, encoder_lens = self.listener(x,lx)

@@ -106,3 +106,26 @@ class CustomSchedular():
             #perform exact value calculation (remove fp-errors) here if needed
             self.go=False
         return self.value
+    
+    def get_value(self):
+        return self.value
+    
+class LinearSchedular():
+    def __init__(self, begin_value, begin_time, end_value, end_time):
+        self.begin_value = begin_value
+        self.end_value = end_value
+        self.begin_time = begin_time
+        self.end_time = end_time
+        
+        self.value = begin_value
+        
+    def step(self, t):
+        if t > self.begin_time and t < self.end_time:
+            self.value = self.begin_value + (t - self.begin_time)/(self.end_time - self.begin_time)*(self.end_value-self.begin_value)
+        elif t >= self.end_time:
+            self.value = self.end_value
+            
+        return self.get_value()
+    
+    def get_value(self):
+        return self.value

@@ -1,6 +1,6 @@
 import torch
 from tqdm import tqdm
-from utils import calculate_levenshtein, indices_to_chars, CustomSchedular
+from utils import calculate_levenshtein, indices_to_chars, CustomSchedular, LinearSchedular
 from defines import VOCAB, PAD_TOKEN
 import os
 import wandb
@@ -47,8 +47,9 @@ class Trainer2():
                 reduction='mean',
             )
         self.optimizer =  torch.optim.AdamW(model.parameters(), config["lr"]) # What goes in here?
-        self.lr_schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', threshold=0.0001, factor = 0.2, patience = 3, cooldown=5)
-        self.tf_schedule = CustomSchedular(1.0, 20, 0.1, 15, 0.6) #1.0->0.9 ->..0.6 every 15 epochs starting from 20
+        self.lr_schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', threshold=0.0001, factor = 0.75, patience = 1, cooldown=1)
+        #self.tf_schedule = CustomSchedular(1.0, 20, 0.1, 15, 0.6) #1.0->0.9 ->..0.6 every 15 epochs starting from 20
+        self.tf_schedule = LinearSchedular(0.9, 30, 0.6, 60) #0.9->0.6 in 30 timesteps
         
     def train(self):
         best_loss = 10e6
@@ -93,7 +94,7 @@ class Trainer2():
             
             # validate
             valid_loss, valid_dist, examples = self.validate(epoch)
-            if epoch >= 80:
+            if epoch >= 60:
                 self.lr_schedule.step(valid_loss) #step lr decay
             
             # schedule tf ratio
