@@ -310,9 +310,9 @@ class AttentionDecoder(torch.nn.Module):
 
         self.embedding =  EmbeddingLayer(output_dim, hidden_dim, padding_idx=defines.PAD_TOKEN)
         #self.embedding_dropout = nn.Dropout(p = 0.2)
-        self.lstm_cell1 = nn.LSTMCell(hidden_dim*2, hidden_dim*2)
+        self.lstm_cell1 = nn.LSTMCell(hidden_dim*2, hidden_dim)
         self.locked_dropout = LockedDropoutCell(dropout)
-        self.lstm_cell2 = nn.LSTMCell(hidden_dim*2, hidden_dim)
+        self.lstm_cell2 = nn.LSTMCell(hidden_dim, hidden_dim)
 
         # For CDN (Feel free to change)
         self.softmax = nn.LogSoftmax(dim=-1)
@@ -359,7 +359,7 @@ class AttentionDecoder(torch.nn.Module):
     
     def forward(self, encoder_outputs, y=None, 
                 teacher_forcing_ratio = 1.0, 
-                need_weights=False, need_probs = False):
+                need_weights=False, need_probs = False, greedy=False):
         B = encoder_outputs.shape[0] 
         
         if y is None: #inference mode
@@ -409,9 +409,12 @@ class AttentionDecoder(torch.nn.Module):
             out = self.CDN(torch.cat([hc2[0], ctx], dim = -1))
             output_logits.append(out.unsqueeze(1))
             
-            # draws a symbol - this will not work
-            
-            if need_probs:
+            # draws a symbol - greedy or sample
+            if greedy: #greedy approach
+                _, indices = out.max(dim=-1, keepdim=True)
+                output_chars.append(indices)
+                out = F.one_hot(indices.squeeze(-1), self.output_dim) * 1.0
+            elif need_probs: #use torch.categorical to also calculate a score
                 dis = Categorical(logits=out)
                 out = dis.sample()
                 output_chars.append(out.unsqueeze(-1))
@@ -422,8 +425,7 @@ class AttentionDecoder(torch.nn.Module):
                 
                 # convert to one-hot
                 out = F.one_hot(out, self.output_dim) * 1.0
-            # gumbel softmax trick!
-            else:
+            else: # gumbel softmax trick!
                 out, indices = self.draw_random(out)
                 output_chars.append(indices)
             
@@ -499,7 +501,7 @@ class ASRModel_Attention(torch.nn.Module):
                                         dropout=dropout)
         self.output_size = output_size    
     
-    def forward(self, x,lx,y=None, teacher_forcing_ratio=1):
+    def forward(self, x,lx,y=None, teacher_forcing_ratio=1, greedy=True):
         # augmentations
         if self.training:
             x = self.augmentations(x.transpose(-1, -2)).transpose(-1, -2)
@@ -511,9 +513,27 @@ class ASRModel_Attention(torch.nn.Module):
         # Decode text with the speller using context from the attention
         outputs, data = self.speller(encoder_outputs, y, 
                                            teacher_forcing_ratio = teacher_forcing_ratio,
-                                           need_weights = True)
+                                           need_weights = True,
+                                           greedy = greedy)
         return outputs, data["attentions"]
     
+    
+    # 'generate' method 1:greedy decoding
+    # really a simple wrapper around the speller forward method
+    def generate_greedy(self, x, lx, y=None, teacher_forcing_ratio = 0.0):
+        with torch.no_grad():
+            encoder_outputs, encoder_lens = self.listener(x,lx)
+            self.attend.compute_kv(encoder_outputs)
+            outputs, data = self.speller(encoder_outputs, y, 
+                                           teacher_forcing_ratio = teacher_forcing_ratio,
+                                           need_weights = True,
+                                           greedy = True)
+        return data["decodes"], data["attentions"]
+    
+    
+    # 'generate' method 2: take samples
+    # generate n_decodes samples and choose the decode with highest log probability
+    # currently adds log probs after the <EOS> token. otherwise, shorter sentences would have advantage.
     def generate_decodes(self, n_decodes, x, lx, y=None, teacher_forcing_ratio=1):
         with torch.no_grad():
             # Encode speech features
@@ -526,7 +546,8 @@ class ASRModel_Attention(torch.nn.Module):
                 output, info = self.speller(encoder_outputs, y, 
                                       teacher_forcing_ratio = teacher_forcing_ratio,
                                       need_weights = False,
-                                      need_probs = True
+                                      need_probs = True,
+                                      greedy=False
                                       )
                 outputs.append(info["decodes"])
                 log_probs.append(info["log_probs"])
