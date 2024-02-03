@@ -136,7 +136,7 @@ class MEAudioDataset(Dataset):
             mfcc_files_360 = [os.path.join(mfcc_dir, fname) for fname in files[:]]
             transcript_files_360 = [os.path.join(transcript_dir, fname) for fname in files[:]]
             for idx in range(len(mfcc_files_360)):
-                with open(self.mfcc_files360[idx], "rb") as f:
+                with open(mfcc_files_360[idx], "rb") as f:
                     mfcc = np.load(f)
                     if mfcc.shape[0] > 2448: continue
                     mfcc_files.append(mfcc_files_360[idx])
@@ -180,6 +180,39 @@ class MEAudioDataset(Dataset):
 
         return padded_mfcc, padded_transcripts, torch.tensor(mfcc_lens, dtype=torch.long), torch.tensor(transcript_lens, dtype=torch.long)
     
+    
+class MEAudioDatasetTest(Dataset):
+    def __init__(self, cepstral=False, base_dir = BASE_DIR):
+        self.mfcc_dir = os.path.join(base_dir, "test-clean", "mfcc")
+        self.mfcc_files = [os.path.join(self.mfcc_dir, fname) for fname in os.listdir(self.mfcc_dir)]
+
+        self.mfccs = []
+        for filename in self.mfcc_files:
+            with open(filename, "rb") as f:
+                self.mfccs.append(np.load(f))
+
+        self.VOCAB      = defines.VOCAB
+        self.VOCAB_MAP = defines.VOCAB_MAP
+        print("create memory efficient dataset from data ", os.path.join(base_dir, 'test-clean'))
+        print("\ttotal mfcc cnt: ", len(self.mfcc_files))
+
+    def __len__(self):
+        return len(self.mfccs)
+
+    def __getitem__(self, ind):
+        return self.mfccs[ind]
+
+    def collate_fn(self,batch):
+
+        mfccs, mfcc_lengths = [], []
+        for x in batch:
+            # Append the mfccs and their lengths to the lists created above
+            mfccs.append(torch.as_tensor(x))
+            mfcc_lengths.append(x.shape[0])
+            
+        padded_mfcc = pad_sequence(mfccs, batch_first=True)
+        
+        return padded_mfcc, torch.tensor(mfcc_lengths, dtype=torch.long)
     
 # dataset checker
 def verify_dataset(dataset, partition= 'train-clean-100'):

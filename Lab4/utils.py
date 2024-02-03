@@ -82,7 +82,7 @@ def calculate_levenshtein(output, label, output_lens, label_lens, decoder, PHONE
     return dist
 
 
-# schedular
+# schedular classes
 class CustomSchedular():
     def __init__(self, begin_value, begin_time, step_amount, step_every, value_limit=None) -> None:
         self.value = begin_value
@@ -129,3 +129,22 @@ class LinearSchedular():
     
     def get_value(self):
         return self.value
+    
+    
+# loading and saving script
+def load_model(load_path, model, optimizer=None):
+
+    print(f"Loading checkpoint from {load_path}")
+    checkpoint  = torch.load(load_path)
+    model.load_state_dict(checkpoint['model_state_dict'], strict= False)
+
+    if optimizer != None:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        optimizer.param_groups[0]['weight_decay'] = 1e-5
+
+    epoch   = checkpoint['epoch']
+    metric  = checkpoint['valid_loss']
+    print(f"\tepoch{epoch} val_loss={metric:.04f}")
+
+    return [model, optimizer, epoch, metric]
+    

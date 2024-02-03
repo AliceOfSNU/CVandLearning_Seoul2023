@@ -7,7 +7,7 @@ import wandb
 import matplotlib.pyplot as plt
 import Levenshtein
 
-USE_WANDB = True
+USE_WANDB = False
 BASE_DIR= "CVandLearning_Seoul2023/Lab4"
 
 class Trainer2():
@@ -47,7 +47,7 @@ class Trainer2():
                 reduction='mean',
             )
         self.optimizer =  torch.optim.AdamW(model.parameters(), config["lr"]) # What goes in here?
-        self.lr_schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', threshold=0.0001, factor = 0.75, patience = 1, cooldown=1)
+        self.lr_schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', threshold=0.0001, factor = 0.5, patience = 2, cooldown=2)
         #self.tf_schedule = CustomSchedular(1.0, 20, 0.1, 15, 0.6) #1.0->0.9 ->..0.6 every 15 epochs starting from 20
         self.tf_schedule = LinearSchedular(0.9, 30, 0.6, 60) #0.9->0.6 in 30 timesteps
         
