@@ -6,30 +6,39 @@ import os
 import wandb
 import matplotlib.pyplot as plt
 import Levenshtein
+import json
 
 USE_WANDB = False
 BASE_DIR= "CVandLearning_Seoul2023/Lab4"
-
 class Trainer2():
     # bsaic trainer class.
     def __init__(self, model, train_loader, val_loader, 
                  decoder, # either CTCDecodeUtil, GreedyDecodeUtil,
                  config, verbose=True):
+        #components
         self.model = model
+        
         self.device = 'cuda' if torch.cuda.is_available() else "cpu"
+        self.model.to(self.device)
+        
         self.verbose = verbose
         if verbose:
             print("using device.. ", self.device)
             print(self.model.named_modules)
-        self.model.to(self.device)
         self.decoder = decoder
         
         self.train_loader = train_loader
         self.val_loader = val_loader
 
         self.run_id = config["run_id"]
-        config.pop("run_id")
-        os.makedirs(os.path.join(BASE_DIR, f"model/{self.run_id}"), exist_ok=True)
+        
+        # saving and loading
+        self.save_dir = os.path.join(BASE_DIR, f"model/{self.run_id}")
+        os.makedirs(self.save_dir, exist_ok=True)
+        with open(os.path.join(self.save_dir, "config.json"), "w") as f:
+            json.dump(config, f, indent=2)
+        
+        
         if USE_WANDB:
             self.run = wandb.init(
                 name = self.run_id, 
@@ -104,9 +113,9 @@ class Trainer2():
             if valid_loss < best_loss:
                 if self.verbose: print("best loss!")
                 best_loss = valid_loss
-                self.save_model(epoch, valid_loss, os.path.join(BASE_DIR, f"model/{self.run_id}/best.pt"))
+                self.save_model(epoch, valid_loss, self.save_dir, "best.pt")
             if epoch % 5 == 0:
-                self.save_model(epoch, valid_loss, os.path.join(BASE_DIR, f"model/{self.run_id}/epoch{epoch}.pt"))
+                self.save_model(epoch, valid_loss, self.save_dir, f"epoch{epoch}.pt")
             ## checkpointing ends
             
             ## add epoch logs here
@@ -187,13 +196,12 @@ class Trainer2():
         val_dist = vdist/len(self.val_loader)
         return total_loss, val_dist, example
     
-    def save_model(self, epoch, valid_loss, path):
+    def save_model(self, epoch, valid_loss, savedir, filename):
         torch.save(
             {'model_state_dict'        : self.model.state_dict(),
             'optimizer_state_dict'     : self.optimizer.state_dict(),
             'scheduler_state_dict'     : self.lr_schedule.state_dict(),
             'valid_loss'               : valid_loss,
             'epoch'                    : epoch},
-            path
+            os.path.join(savedir, filename)
         )
-        
