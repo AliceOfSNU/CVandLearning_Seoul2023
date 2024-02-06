@@ -1,4 +1,16 @@
 ### Weakly supervised detection network
+
+In this project, we train a deep neural network to detect objects and create bounding boxes WITHOUT providing bounding boxes as labels. For each training image, just the existence of each of the 20 classes is provided. This method is 'weakly supervised' in this sense.
+
+For the backbone, we use the first 5 convolutional layers of pretrained Alexnet. 
+The classifier model is my pytorch implementation of a simplified version of WSDNN from paper:
+
+[1]
+Bilen, Hakan, and Andrea Vedaldi.**"Weakly supervised deep detection networks."**  Proceedings of the IEEE conference on computer vision and pattern recognition. 2016.
+___
+
+Components
+
 - WSDDN.py
 
     - uses pre-trained AlexNet's feature extraction layers
@@ -13,15 +25,11 @@
 
 The default sizes for each floor of the pyramid are set to [4x4, 2x2, 1x1]. 
 
-![spp](results/spp.png| width=100)
 
 <img src="results/spp.png" width="256" >
 
-___
-a pytorch implementation of a simplified version of WSDNN from paper:
+### Samples after training 6 epochs(~20minutes)
 
-[1]
-Bilen, Hakan, and Andrea Vedaldi.**"Weakly supervised deep detection networks."**  Proceedings of the IEEE conference on computer vision and pattern recognition. 2016.
 
 <img src="results/b_horse.png" width="256" >
 <img src="results/b_bicycle.png" width="256" >
