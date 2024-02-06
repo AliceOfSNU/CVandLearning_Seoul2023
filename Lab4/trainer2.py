@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import Levenshtein
 import json
 
-USE_WANDB = False
+USE_WANDB = True
 BASE_DIR= "CVandLearning_Seoul2023/Lab4"
 class Trainer2():
     # bsaic trainer class.

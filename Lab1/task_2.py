@@ -54,7 +54,7 @@ parser.add_argument(
 )
 parser.add_argument(
     '--epochs',
-    default=5,
+    default=6,
     type=int
 )
 parser.add_argument(
@@ -75,10 +75,9 @@ parser.add_argument(
 # ------------
 
 # Set random seed
-rand_seed = 1024
-if rand_seed is not None:
-    np.random.seed(rand_seed)
-    torch.manual_seed(rand_seed)
+rand_seed = 12
+np.random.seed(rand_seed)
+torch.manual_seed(rand_seed)
 
 # Set output directory
 output_dir = "./"
@@ -138,82 +137,79 @@ def test_model(model, val_loader=None, thresh=0.05):
     """
     Tests the networks and visualizes the detections
     :param thresh: Confidence threshold
+    :return ap:             mean average precision
+            cls_aps[List]:  list of per-class average precision
     """
-    # for each class store (pred_score, T/F)
+    # for each class store (pred_scorelist, T/F)
     detections = [[] for i in range(20)]
     # store how many instances of each class exists in valid set.(gt)
     gt_cnts = [0] * 20
-    end_time = time.time()
-    
-    temp_precisions = []
+    temp_precisions = [0] * 20
+        
     print("evaluating on.. ", len(val_loader), " data")
     with torch.no_grad():
         for iter, data in tqdm.tqdm(enumerate(val_loader, 0), unit="batch", total=len(val_loader)):
             # one batch = data for one image
             image = data['image'].cuda()
             target = data['label'].cuda()
-            rois = data['rois']
+            rois = data['rois'].cuda()
             gt_boxes = data['gt_boxes']
             gt_class_list = data['gt_classes']
 
             # TODO (Q2.3): perform forward pass, compute cls_probs
             h, w = image.shape[-2:]
-            scale_factor = torch.Tensor([w, h, w, h])
-            roi_pix = [
-                torch.cat(bbox)*scale_factor for bbox in rois
-            ]
-            roi_pix  = torch.stack(roi_pix, dim=0).float().cuda()
-            cls_probs = model.forward(image, roi_pix, target)
+            scale_factor = rois.new([w, h, w, h])
+            roi_pix = rois * scale_factor
+            cls_probs = model.forward(image, roi_pix, target).detach().cpu().numpy()
             
-            temp_precision = 0.0 # per-image precision, as a rough measure
+            del image
             # TODO (Q2.3): Iterate over each class (follow comments)
             # ground truth detection counts.
             for cl in gt_class_list:
                 gt_cnts[cl.item()] += 1
                 
-            # precompute bounding boxes
-            box_ious = box_iou(torch.Tensor(rois), torch.Tensor(gt_boxes))
+            # precompute bounding boxes.
+            # each batch has only one instance, hence index [0]
+            box_ious = box_iou(rois[0].cpu(), gt_boxes[0]).detach().numpy()
             
             # iterate over classes
             for class_num in range(20):
                 # get valid rois and cls_scores based on thresh
                 cls_scores = cls_probs[:, class_num]
                 used = [False] * len(gt_boxes)
+                match_in_img = 0.0 # per-image precision, as a rough measure
+                
                 # iterate over detections
                 for idx in range(len(rois)):
                     # filter low scores (negatives)
                     if cls_scores[idx] < thresh: continue
                     
                     # iterate over gt_bboxes and find matching bbox
-                    found = False
+                    gt_exists = False
                     for gt_idx in range(len(gt_boxes)):
                         if gt_class_list[gt_idx] != class_num or used[gt_idx]: continue
+                        gt_exists = True
+                        
                         if  box_ious[idx, gt_idx] > 0.5:
                             # a true positive
-                            detections[class_num].append((cls_scores[idx].item(), 1))
-                            temp_precision += 1.0
-                            used[gt_idx] = True; found=True 
+                            detections[class_num].append((cls_scores[idx], 1))
+                            temp_precisions[class_num] += 1.0
+                            used[gt_idx] = True
                         else:
                             # if not enough overlap, again it's false
-                            detections[class_num].append((cls_scores[idx].item(), 0))
+                            detections[class_num].append((cls_scores[idx], 0))
                             
-                    # if no matching gt_bbox found for this prediction, it's a FP
-                    if not found:
-                        detections[class_num].append((cls_scores[idx].item(), 0))
-                        
-            
-            if iter > 0 and iter % 500 == 0: print("eval ", iter, "/",len(val_loader))
-            temp_precisions.append(0.0 if len(gt_boxes)== 0 else temp_precision/len(gt_boxes))
-        temp_precision = 0.0
-        
-        for pc in temp_precisions: temp_precision += pc
-        print(f"eval_time: {time.time()-end_time}")
+                    # if no gt_bbox for this class, it's a FP (i.e. image does not contain cls.)
+                    if not gt_exists:
+                        detections[class_num].append((cls_scores[idx], 0))      
+                            
+        print("---- eval: class-wise precision % ----")
+        for c, cl in enumerate(CLASS_NAMES):
+            print(f"{cl}: prec {temp_precisions[c]/max(1.0, gt_cnts[c]):.04f}({temp_precisions[c]}/{gt_cnts[c]})")
         ap, cls_aps = calculate_map(detections, gt_cnts)
         
-
     return ap,cls_aps
         
-
 
 def train_model(model, train_loader=None, val_loader=None, optimizer=None, schedular=None, args=None):
     """
@@ -226,31 +222,22 @@ def train_model(model, train_loader=None, val_loader=None, optimizer=None, sched
     step_cnt = 0
     batch_time = AverageMeter()
     losses = AverageMeter()
-    print("training ------------")
     for epoch in range(args.epochs):
         end = time.time()
         for iter, data in tqdm.tqdm(enumerate(train_loader, 0), unit="batch", total=len(train_loader)):
 
-            # TODO (Q2.2): get one batch and perform forward pass
             # one batch = data for one image
             image = data['image'].cuda()
             target = data['label'].cuda()
-            wgt = data['wgt']
-            rois = data['rois']
-            gt_boxes = data['gt_boxes']
-            gt_class_list = data['gt_classes']
+            rois = data['rois'].cuda()
             
             h, w = image.shape[-2:]
-            scale_factor = torch.Tensor([w, h, w, h])
-            rois = [
-                torch.cat(bbox)*scale_factor for bbox in rois
-            ]
-            rois  = torch.stack(rois, dim=0).float().cuda()
-            # TODO (Q2.2): perform forward pass
+            scale_factor = rois.new([w, h, w, h])
+            rois = rois * scale_factor
+            
             # take care that proposal values should be in pixels
-            # Convert inputs to cuda if training on GPU
             model.forward(image, rois, target)
-            # backward pass and update
+
             loss = model.loss
             train_loss += loss.item()
             step_cnt += 1
@@ -265,65 +252,36 @@ def train_model(model, train_loader=None, val_loader=None, optimizer=None, sched
             
             # measure average elapsed time per each forward
             batch_time.update(time.time() - end)
-            end = time.time()
+            end = time.time();
             
-            # TODO (Q2.2): evaluate the model every N iterations (N defined in handout)
-            # Add wandb logging wherever necessary
-            if iter % 500 == 0 and iter != 0: # switch back to iter % args.val_interval
-                # logging section
-                print('Epoch: [{0}][{1}/{2}]\t'
-                  'LR {3}\t'
-                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  .format(
-                      epoch,
-                      iter,
-                      len(train_loader),
-                      optimizer.param_groups[0]["lr"],
-                      batch_time=batch_time,
-                      loss=losses))
-                if USE_WANDB:
-                    wandb.log({'iteration': step_cnt, "train/loss": losses.avg, "train/lr":optimizer.param_groups[0]["lr"]})   
-                break; #DEBUG ONLY.
+        # log epoch training info
+        print(f'Epoch: [{epoch+1}]\tLR {optimizer.param_groups[0]["lr"]}\tLoss {losses.avg:.4f}')
+        
         # validation per epoch
         model.eval()
-        #ap, cls_aps = test_model(model, val_loader)
-        #print("Epoch: [{0}] Evaluation\t"
-        #      "mAP {1}".format(epoch, ap))
-        #for cl, ap in enumerate(cls_aps):
-        #    print(f"{CLASS_NAMES[cl]}: {ap}")
-        ##USE_WANDB=False
-        #if USE_WANDB:
-        #    # log mAP and per class AP
-        #    dic = {f"eval/ap_{CLASS_NAMES[cl]}":cls_ap for cl, cls_ap in enumerate(cls_aps)}
-        #    dic.update({"eval/mAP": ap})
-        #    wandb.log(dic)
-        #USE_WANDB=False
         
-        # TODO (Q2.4): Perform all visualizations here
-        # The intervals for different things are defined in the handout
-        viz_images, viz_boxes = [], []
+        ap, cls_aps = test_model(model, val_loader)
+        print("Epoch {0} Evaluation\t"
+              "mAP {1:.04}".format(epoch+1, ap))
+
+        wdb_imgs= []
         # use NMS to get boxes and scores for vis
         for n, data in enumerate(val_loader):
             # run forward for 10 images
             image = data['image'].cuda()
             target = data['label'].cuda()
-            rois = data['rois']
+            rois = data['rois'].cuda()
 
-            # TODO (Q2.3): perform forward pass, compute cls_probs
             h, w = image.shape[-2:]
-            scale_factor = torch.Tensor([w, h, w, h])
-            roi_pix = [
-                torch.cat(bbox)*scale_factor for bbox in rois
-            ]
-            roi_pix  = torch.stack(roi_pix, dim=0).float().cuda()
-            cls_probs = model.forward(image, roi_pix, target)
+            scale_factor = rois.new([w, h, w, h])
+            roi_pix = rois * scale_factor
+            cls_probs = model.forward(image, roi_pix, target).detach().cpu()
             
             # iterate over each class and run nms
             nms_bboxes = []
             for class_num in range(20):
                 cls_scores = cls_probs[:, class_num]
-                bboxes, scores = nms(torch.Tensor(rois).cpu(), cls_scores.cpu(), 0.3)
+                bboxes, scores = nms(rois[0].cpu(), cls_scores, 0.3)
                 nms_bboxes.extend([{
                             "position": {
                                 "minX": bbox[0],
@@ -336,29 +294,29 @@ def train_model(model, train_loader=None, val_loader=None, optimizer=None, sched
                         } for bbox in bboxes])
                             
             # draw random 10 images with bounding boxes
-            #USE_WANDB=True #debugging.. remove this 
             if USE_WANDB:
-                viz_images.append(tensor_to_PIL(data['image'].squeeze(0)))
+                viz_image = tensor_to_PIL(data['image'].squeeze(0))
                 if len(nms_bboxes)>0:
-                    viz_boxes.append({
-                        "proposals": {
+                    wdb_imgs.append(wandb.Image(
+                        viz_image,
+                        boxes = { "proposals": {
                             "box_data": nms_bboxes
-                        },
-                    })
+                        }}
+                    ))
                 else:
-                    viz_boxes.append(None)
-            #USE_WANDB=False
+                    wdb_imgs.append(wandb.Image(viz_image))
+            
             if n == 19: break # total 10 images shown. end of viz image loop
             
         model.train()
 
-        #USE_WANDB=False
         if USE_WANDB:
-            # TODO (Q2.3): visualize bounding box predictions when required          
-            wdb_img = [wandb.Image(img, boxes=box) if box != None else wandb.Image(img) for img, box in zip(viz_images, viz_boxes)]
-            wandb.log({"region proposals": wdb_img})
-        #USE_WANDB=False
-        
+            dic = {f"eval/ap_{CLASS_NAMES[cl]}":cls_ap for cl, cls_ap in enumerate(cls_aps)}
+            dic.update({"eval/mAP": ap,  "train/loss": losses.avg, "train/lr":optimizer.param_groups[0]["lr"]})
+            dic.update({"region proposals": wdb_imgs})
+            dic.update({"epoch": epoch+1})
+            
+            wandb.log(dic)
         
 
 def main():
@@ -369,10 +327,27 @@ def main():
     global CLASS_NAMES
     
     args = parser.parse_args()
-    # TODO (Q2.2): Load datasets and create dataloaders
+    
+    # config items to log
+    config = {
+        'lr': args.lr,
+        'lr_decay_every':args.lr_decay_steps,
+        'lr_decay': args.lr_decay,
+        'momentum': args.momentum,
+        'spp_sizes': [4, 2, 1],
+        "run_id": "use spp"
+    }
+    
     # Initialize wandb logger
     if USE_WANDB:
-        wandb.init(project="vlr-hw1")
+        run = wandb.init(
+            name = config["run_id"], 
+            reinit = True, 
+            # run_id = ### Insert specific run id here if you want to resume a previous run
+            # resume = "must" ### You need this to resume previous runs, but comment out reinit = True when using this
+            project = "weakly supervised deep detection network", 
+            config=config
+        )
         
     train_dataset = VOCDataset('trainval', image_size=512, top_n=300) #change to 300
     val_dataset = VOCDataset('test', image_size=512, top_n=300) #change to 300
@@ -396,7 +371,7 @@ def main():
         drop_last=True)
 
     # Create network and initialize
-    net = WSDDN(classes=train_dataset.CLASS_NAMES)
+    net = WSDDN(spp_dim=[4, 2, 1], use_spp=True,classes=train_dataset.CLASS_NAMES)
     print(net)
 
     if os.path.exists('pretrained_alexnet.pkl'):
@@ -441,7 +416,8 @@ def main():
 
     # Training
     train_model(net, train_loader, val_loader, optimizer, scheduler, args)
-
+    if USE_WANDB:
+        run.finish()
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""

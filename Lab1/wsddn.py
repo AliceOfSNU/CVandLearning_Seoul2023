@@ -16,7 +16,7 @@ class WSDDN(nn.Module):
         'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor'
     ])
 
-    def __init__(self, classes=None):
+    def __init__(self, spp_dim, use_spp = True, classes=None):
         super(WSDDN, self).__init__()
 
         if classes is not None:
@@ -44,23 +44,23 @@ class WSDDN(nn.Module):
         # pooling and spp
         self.roi_pool = roi_pool
         self.roi_size = 32
-        ## if pyramid_pool
-        self.spp_sizes = [16, 4, 1]
-        self.spp_dim = 0
-        for sz in self.spp_sizes: self.spp_dim += sz
-        ## else
-        self.spp_dim_sqrt = 4
-        self.spp_dim = 16
+        self.spp_size = 0
+        self.use_spp = use_spp
+        if use_spp:
+            self.spp_dim = spp_dim
+            for sz in spp_dim: self.spp_size += sz*sz
+        else:
+            self.spp_dim = spp_dim
+            self.spp_size = spp_dim*spp_dim
         ##
         self.classifier = nn.Sequential(
             # fc6
-            nn.Linear(self.spp_dim * 256, self.spp_dim * 64),
+            nn.Linear(self.spp_size * 256, self.spp_size * 64),
             nn.ReLU(inplace=True),
             # fc7
-            nn.Linear(self.spp_dim * 64, 256),
+            nn.Linear(self.spp_size * 64, 256),
             nn.ReLU(inplace=True)
         )
-
 
         # fc8c (classification head)
         self.score_fc = nn.Linear(256, self.n_classes)
@@ -80,19 +80,23 @@ class WSDDN(nn.Module):
                 gt_vec=None,
                 ):
 
-
-        # TODO (Q2.1): Use image and rois as input
-        # compute cls_prob which are N_roi X 20 scores
-        x = self.features(image)
-        ## if spp_pooling
+        # start with feature map of 256 channels and 31*31 size
+        x = self.features(image) # 1(batch), channels=256, 31, 31
+        if self.use_spp:
             # spp-pooling is a pyramid like max pooling
             # each pyramid layer outputs different dims, 4*4, 2*2, 1*1, for example
             # they are concatenated and flattened to a 21*feature_dim - tensor
-        ## else
-        x = self.roi_pool(x, [rois], self.spp_dim_sqrt, spatial_scale=31/512) # N_roi * n_features *  2 * 2
+            spp_outputs = []
+            spp_outputs.append(self.roi_pool(x, [*rois], self.spp_dim[0], spatial_scale=31/512).flatten(-2))
+            spp_outputs.append(self.roi_pool(x, [*rois], self.spp_dim[1], spatial_scale=31/512).flatten(-2))
+            spp_outputs.append(self.roi_pool(x, [*rois], self.spp_dim[2], spatial_scale=31/512).flatten(-2))
+            x = torch.cat(spp_outputs, -1).flatten(-2)
+        else:            
+            x = self.roi_pool(x, [*rois], self.spp_dim, spatial_scale=31/512) # N_roi * n_features *  2 * 2
+            x = x.view(*x.shape[:-3], 256*self.spp_size)
         ## endif
         
-        x = self.classifier(x.view(*x.shape[:-3], 256*self.spp_dim)) # N_roi * 256
+        x = self.classifier(x) # N_roi as batch_size, flattened 1st dim
         c_scores = self.score_fc(x).softmax(dim=-1) # softmax over classes
         d_scores = self.bbox_fc(x).softmax(dim=-2) # softmax over regions
         cls_prob = c_scores * d_scores # elementwise prod, N_roi * n_classes
@@ -110,15 +114,9 @@ class WSDDN(nn.Module):
         :returns: loss
 
         """
-        # TODO (Q2.1): Compute the appropriate loss using the cls_prob
-        # that is the output of forward()
-        # Checkout forward() to see how it is called
-        # labels mapped to -1, 1
-        #label_vec = (label_vec * 2) - 1.0
         # calculate loss, summing over regions
         summed_cls_probs = cls_prob.sum(0, keepdim=True)
-        summed_cls_probs = summed_cls_probs.clamp(0.0, 1.0)
-        #loss = torch.log(label_vec * (summed_cls_probs - 0.5) + 0.5)
-        #loss = loss.sum()
+        summed_cls_probs = torch.clamp(summed_cls_probs[0].unsqueeze(-1), 0.0, 1.0)
+        label_vec = label_vec[0].unsqueeze(-1)
         loss = F.binary_cross_entropy(summed_cls_probs, label_vec, reduction='sum')
         return loss

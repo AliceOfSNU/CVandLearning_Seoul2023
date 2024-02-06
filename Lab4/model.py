@@ -310,12 +310,12 @@ class AttentionDecoder(torch.nn.Module):
 
         self.embedding =  EmbeddingLayer(output_dim, hidden_dim, padding_idx=defines.PAD_TOKEN)
         #self.embedding_dropout = nn.Dropout(p = 0.2)
-        self.lstm_cell1 = nn.LSTMCell(hidden_dim*2, hidden_dim)
+        self.lstm_cell1 = nn.LSTMCell(hidden_dim*2, hidden_dim*2)
         self.locked_dropout = LockedDropoutCell(dropout)
-        self.lstm_cell2 = nn.LSTMCell(hidden_dim, hidden_dim)
+        self.lstm_cell2 = nn.LSTMCell(hidden_dim*2, hidden_dim)
 
         # For CDN (Feel free to change)
-        self.softmax = nn.LogSoftmax(dim=-1)
+        self.softmax = nn.Softmax(dim=-1)
         
         self.classifier = nn.Linear(hidden_dim, output_dim)
         
@@ -342,9 +342,15 @@ class AttentionDecoder(torch.nn.Module):
         
         self.output_dim = output_dim
         
-    def draw_greedy(self, x):
-        # argmax sampling with gradient trick
-        raise NotImplementedError
+    def draw_greedy(self, logits, hard = False):
+        _, indices = logits.max(dim=-1, keepdim=True)
+        y_soft = self.softmax(logits)
+        if not hard:
+            return y_soft, indices
+        else: 
+            # gradient trick
+            y_hard = torch.zeros_like(logits).scatter_(-1, indices, 1.0)
+            return y_hard - y_soft.detach() + y_soft, indices
     
     def draw_random(self, logits, tau=1.0):
         # gumbel sampling with gradient trick
@@ -411,9 +417,8 @@ class AttentionDecoder(torch.nn.Module):
             
             # draws a symbol - greedy or sample
             if greedy: #greedy approach
-                _, indices = out.max(dim=-1, keepdim=True)
+                out, indices = self.draw_greedy(out, hard=True)
                 output_chars.append(indices)
-                out = F.one_hot(indices.squeeze(-1), self.output_dim) * 1.0
             elif need_probs: #use torch.categorical to also calculate a score
                 dis = Categorical(logits=out)
                 out = dis.sample()

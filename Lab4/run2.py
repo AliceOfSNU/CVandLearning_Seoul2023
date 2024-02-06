@@ -15,12 +15,11 @@ torch.cuda.empty_cache()
 gc.collect()
 
 BASE_DIR= "CVandLearning_Seoul2023/Lab4"
-run_id = "attn_128"
-MODEL_DIR = os.path.join(BASE_DIR, "model", run_id)
 DATA_DIR = "data/E2EASR_kaggle"
 with open(os.path.join(BASE_DIR, "config.json"), "r") as f:
     config = json.load(f)
-    config["run_id"] = run_id
+run_id = config["run_id"]
+MODEL_DIR = os.path.join(BASE_DIR, "model", run_id)
 
 train_data = MEAudioDataset('train-clean-100',cepstral=True, base_dir=DATA_DIR)
 val_data = MEAudioDataset('dev-clean',cepstral=True, base_dir=DATA_DIR)

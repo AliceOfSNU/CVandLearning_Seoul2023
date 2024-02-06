@@ -171,13 +171,12 @@ class VOCDataset(Dataset):
             xmax = t[3] / width
             proposals.append([xmin, ymin, xmax, ymax])
 
-
         ret = {}
         ret['image'] = img
         ret['label'] = label
         ret['wgt'] = wgt
-        ret['rois'] = proposals
-        ret['gt_boxes'] = gt_boxes
+        ret['rois'] = torch.Tensor(proposals)
+        ret['gt_boxes'] = torch.Tensor(gt_boxes)
         ret['gt_classes'] = gt_class_list
         return ret
 
